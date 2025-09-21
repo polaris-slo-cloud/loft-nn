@@ -9,7 +9,7 @@ setup(
     author_email="maxi.maresch@gmail.com",
     package_dir={"": "src"},
     packages=find_packages(where="src"),
-    python_requires=">=3.6",
+    python_requires=">=3.10",
     project_urls={
         "Bug Reports": "https://github.com/m-maresch/loftnn/issues",
         "Source": "https://github.com/m-maresch/loftnn",
