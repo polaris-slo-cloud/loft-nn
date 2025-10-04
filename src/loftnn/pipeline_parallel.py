@@ -26,7 +26,11 @@ class PipelineParallel(nn.Module):
         self.pipeline_config = pipeline_config
         self.device = device
 
-        init_process_group(backend=process_config.backend)
+        init_process_group(
+            backend=process_config.backend,
+            world_size=process_config.world_size,
+            rank=process_config.rank,
+        )
 
         split_spec = {
             split_point: SplitPoint.BEGINNING

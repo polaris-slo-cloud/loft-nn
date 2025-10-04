@@ -16,7 +16,11 @@ class DataParallel(nn.Module):
         self.process_config = process_config
         self.device = device
 
-        init_process_group(backend=process_config.backend)
+        init_process_group(
+            backend=process_config.backend,
+            world_size=process_config.world_size,
+            rank=process_config.rank,
+        )
 
         if device == Device.cuda:
             self.ddp_model = DDP(model, device_ids=[process_config.local_rank])
