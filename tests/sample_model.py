@@ -35,3 +35,13 @@ class SimpleNN(nn.Module):
     def forward(self, x):
         x_flat = self.flatten(x)
         return self.linear_relu_model(x_flat)
+
+
+class BalancedNN(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear_1 = nn.Linear(100, 100)
+        self.linear_2 = nn.Linear(100, 100)
+
+    def forward(self, x):
+        return self.linear_2(self.linear_1(x))

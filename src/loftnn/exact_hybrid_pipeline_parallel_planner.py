@@ -96,45 +96,81 @@ def plan_hpp(layers, devices, micro_batch_size: int, num_micro_batches: int):
                         # np devices execute layers lp
 
                         if p == 1:
-                            device_group = devices[
-                                (len(devices) - 1 - n) : (len(devices) - 1)
-                            ]
+                            device_group = devices[np:n]
                             if len(device_group) == 0:
                                 ef[(l, n, lp, np, p)] = 0
                                 eb[(l, n, lp, np, p)] = 0
-                                Qt[(l, n, lp, np, p)] = 0
+                                Qt[(l, n, lp, np, p)] = (0, {})
                                 continue
 
                             samples_allocated = allocation_of_micro_batch(
                                 device_group, micro_batch_size
                             )
-                            i = len(layers) - 1 - l
-                            j = len(layers) - 1
+                            i = lp
+                            j = l
                             esf = max(
                                 [
                                     sum(
                                         [
                                             forward_execution_time(
-                                                layers[l], samples_allocated[device]
+                                                layers[l],
+                                                device,
+                                                samples_allocated[device],
                                             )
                                             for l in range(i, j)
                                         ]
                                     )
                                     for device in device_group
                                 ]
+                            ) + (
+                                transmission_time(
+                                    (
+                                        layers[j]
+                                        if not (
+                                            isinstance(layers[j], nn.ReLU)
+                                            and layers[j].inplace
+                                        )
+                                        else layers[j - 1]
+                                    ),
+                                    mean_d2d_bandwidth(
+                                        devices, devices[0:np], devices[np:n]
+                                    ),
+                                    forward_only=True,
+                                )
+                                if j < len(layers)
+                                else 0
                             )
                             esb = max(
                                 [
                                     sum(
                                         [
                                             backward_execution_time(
-                                                layers[l], samples_allocated[device]
+                                                layers[l],
+                                                device,
+                                                samples_allocated[device],
                                             )
                                             for l in range(i, j)
                                         ]
                                     )
                                     for device in device_group
                                 ]
+                            ) + (
+                                transmission_time(
+                                    (
+                                        layers[j]
+                                        if not (
+                                            isinstance(layers[j], nn.ReLU)
+                                            and layers[j].inplace
+                                        )
+                                        else layers[j - 1]
+                                    ),
+                                    mean_d2d_bandwidth(
+                                        devices, devices[0:np], devices[np:n]
+                                    ),
+                                    backward_only=True,
+                                )
+                                if j < len(layers)
+                                else 0
                             )
                             ef[(l, n, lp, np, p)] = esf
                             eb[(l, n, lp, np, p)] = esb
@@ -159,7 +195,26 @@ def plan_hpp(layers, devices, micro_batch_size: int, num_micro_batches: int):
                             tse = num_micro_batches * (esf + esb)
 
                             hpp_round_latency = tsw + tsa + tse
-                            Qt[(l, n, lp, np, p)] = hpp_round_latency
+                            Qt[(l, n, lp, np, p)] = (
+                                hpp_round_latency,
+                                samples_allocated,
+                            )
+
+                            if (
+                                (l, n, p) not in Q
+                                or Q[(l, n, p)][-1][0] > hpp_round_latency
+                            ) and (  # if no devices are left, then no layers are left to assign:
+                                (not np == 0) or lp == 0
+                            ):
+                                Q[(l, n, p)] = (
+                                    l,
+                                    n,
+                                    lp,
+                                    np,
+                                    p - 1,
+                                    (hpp_round_latency, samples_allocated),
+                                )
+
                             continue
 
                         device_group = devices[np:n]
@@ -173,26 +228,60 @@ def plan_hpp(layers, devices, micro_batch_size: int, num_micro_batches: int):
                                 sum(
                                     [
                                         forward_execution_time(
-                                            layers[l], samples_allocated[device]
+                                            layers[l], device, samples_allocated[device]
                                         )
                                         for l in range(i, j)
                                     ]
                                 )
                                 for device in device_group
                             ]
+                        ) + (
+                            transmission_time(
+                                (
+                                    layers[j]
+                                    if not (
+                                        isinstance(layers[j], nn.ReLU)
+                                        and layers[j].inplace
+                                    )
+                                    else layers[j - 1]
+                                ),
+                                mean_d2d_bandwidth(
+                                    devices, devices[0:np], devices[np:n]
+                                ),
+                                forward_only=True,
+                            )
+                            if j < len(layers)
+                            else 0
                         )
                         esb = max(
                             [
                                 sum(
                                     [
                                         backward_execution_time(
-                                            layers[l], samples_allocated[device]
+                                            layers[l], device, samples_allocated[device]
                                         )
                                         for l in range(i, j)
                                     ]
                                 )
                                 for device in device_group
                             ]
+                        ) + (
+                            transmission_time(
+                                (
+                                    layers[j]
+                                    if not (
+                                        isinstance(layers[j], nn.ReLU)
+                                        and layers[j].inplace
+                                    )
+                                    else layers[j - 1]
+                                ),
+                                mean_d2d_bandwidth(
+                                    devices, devices[0:np], devices[np:n]
+                                ),
+                                backward_only=True,
+                            )
+                            if j < len(layers)
+                            else 0
                         )
                         ef[(l, n, lp, np, p)] = esf
                         eb[(l, n, lp, np, p)] = esb
@@ -218,7 +307,14 @@ def plan_hpp(layers, devices, micro_batch_size: int, num_micro_batches: int):
                                     num_micro_batches
                                     * (
                                         transmission_time(
-                                            layers[j],
+                                            (
+                                                layers[j]
+                                                if not (
+                                                    isinstance(layers[j], nn.ReLU)
+                                                    and layers[j].inplace
+                                                )
+                                                else layers[j - 1]
+                                            ),
                                             mean_d2d_bandwidth(
                                                 devices, devices[0:np], devices[np:n]
                                             ),
@@ -263,6 +359,12 @@ def plan_hpp(layers, devices, micro_batch_size: int, num_micro_batches: int):
                             )
                         )
 
+                        hpp_round_latency = tsw + tsa + tse
+                        if hpp_round_latency < Qt[(l, n, lp, np, p - 1)][0]:
+                            hpp_round_latency = Qt[(l, n, lp, np, p - 1)][0]
+
+                        Qt[(l, n, lp, np, p)] = (hpp_round_latency, samples_allocated)
+
                 if p == 1:
                     continue
 
@@ -271,17 +373,22 @@ def plan_hpp(layers, devices, micro_batch_size: int, num_micro_batches: int):
                         (l, n, lp, np, p - 1, Qt[(l, n, lp, np, p - 1)])
                         for np in range(n)
                         for lp in range(l)
+                        if (  # if no devices are left, then no layers are left to assign:
+                            (not np == 0) or lp == 0
+                        )
                     ],
-                    key=lambda x: x[-1],
+                    key=lambda x: x[-1][0],
                 )
 
-    return min(
+    min_p = min(
         [
-            (p, Q[(len(layers) - 1, len(devices) - 1, p)])
-            for p in range(len(devices), min(len(layers), len(devices)) + 1)
+            (p, Q[(len(layers), len(devices), p)])
+            for p in range(1, min(len(layers), len(devices)) + 1)
         ],
-        key=lambda x: x[1][-1],
-    )
+        key=lambda x: x[1][-1][0],
+    )[0]
+
+    return (Q, min_p)
 
 
 def plan(
@@ -296,4 +403,18 @@ def plan(
         for node in traced_model.graph.nodes
         if node.op == "call_module"
     ]
-    return plan_hpp(layers, worker_group, micro_batch_size, num_micro_batches)
+
+    Q, num_stages = plan_hpp(layers, worker_group, micro_batch_size, num_micro_batches)
+
+    l, n, lp, np, p, v = Q[len(layers), len(worker_group), num_stages]
+    split_points = [lp]
+    device_groups = [np]
+    samples_allocated = [v[1]]
+
+    for s in reversed(range(2, num_stages)):
+        l, n, lp, np, p, v = Q[lp, np, s]
+        split_points.append(lp)
+        device_groups.append(np)
+        samples_allocated.append(v[1])
+
+    return split_points, device_groups, samples_allocated
