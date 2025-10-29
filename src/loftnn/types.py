@@ -46,6 +46,8 @@ class WorkerGroup:
         return None
 
     def min_d2d_bandwidth(self):
+        if len(self) == 1:
+            return 1_000_000_000
         return min([d2d_bandwidth for d2d_bandwidth in self.d2d_bandwidths.values()])
 
     def sorted(self, key):
@@ -56,6 +58,11 @@ class WorkerGroup:
     def __getitem__(self, index):
         worker_group = copy.copy(self)
         worker_group.workers = self.workers[index]
+        worker_group.d2d_bandwidths = {
+            (worker1, worker2): bandwidth
+            for (worker1, worker2), bandwidth in self.d2d_bandwidths.items()
+            if worker1 in worker_group.workers and worker2 in worker_group.workers
+        }
         return worker_group
 
     def __len__(self):
@@ -63,3 +70,6 @@ class WorkerGroup:
 
     def __iter__(self):
         return iter(self.workers)
+
+    def __hash__(self):
+        return hash(tuple(self.workers))
