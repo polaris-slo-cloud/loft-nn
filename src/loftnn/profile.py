@@ -129,8 +129,10 @@ class Profiler:
     def _profile_forward_execution_time(
         self, layer: nn.Module, worker: Worker, sample_size: int, repetitions: int
     ) -> float:
-        cache = self.cache_provider.get_cache(CacheType.forward_execution_time)
         execution_times = []
+        cache = self.cache_provider.get_cache(CacheType.forward_execution_time)
+        if (layer, worker, sample_size) in cache:
+            return
 
         layer.eval()
         for _ in range(repetitions):
@@ -150,12 +152,15 @@ class Profiler:
     def _profile_backward_execution_time(
         self, layer: nn.Module, worker: Worker, sample_size: int, repetitions: int
     ) -> float:
-        cache = self.cache_provider.get_cache(CacheType.backward_execution_time)
         execution_times = []
+        cache = self.cache_provider.get_cache(CacheType.backward_execution_time)
+        if (layer, worker, sample_size) in cache:
+            return
 
         if isinstance(layer, ReLU):
             if layer.inplace:
-                return 0
+                cache[(layer, worker, sample_size)] = 0
+                return
 
         layer.eval()
         for _ in range(repetitions):
@@ -178,13 +183,16 @@ class Profiler:
         self, layer: nn.Module, d2d_bandwidth: int, forward_only, backward_only
     ):
         cache = self.cache_provider.get_cache(CacheType.transmission_time)
+        if (layer, d2d_bandwidth, forward_only, backward_only) in cache:
+            return
 
         if d2d_bandwidth < 0:
             raise ValueError("Bandwidth cannot be negative")
 
         if isinstance(layer, ReLU):
             if layer.inplace:
-                return 0
+                cache[(layer, d2d_bandwidth, forward_only, backward_only)] = 0
+                return
 
         size_intermediate_tensors = (
             (

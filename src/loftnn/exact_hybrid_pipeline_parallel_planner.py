@@ -46,9 +46,7 @@ class Planner:
         Qt = {}
         ef = {}
         eb = {}
-        dm = None
-        edmf = None
-        edmb = None
+        dm = {}
 
         for p in range(0, min(len(layers), len(devices)) + 1):
             for n in range(1, len(devices) + 1):
@@ -106,23 +104,8 @@ class Planner:
                                     )
                                     for device in device_group
                                 ]
-                            ) + (
-                                self.profiler.get_transmission_time(
-                                    (
-                                        layers[j]
-                                        if not (
-                                            isinstance(layers[j], nn.ReLU)
-                                            and layers[j].inplace
-                                        )
-                                        else layers[j - 1]
-                                    ),
-                                    self.profiler.get_mean_d2d_bandwidth(
-                                        devices, devices[0:np], devices[np : n + 1]
-                                    ),
-                                    forward_only=True,
-                                )
-                                if j < len(layers)
-                                else 0
+                            ) + self._get_transmission_time_for_layer(
+                                layers, devices, j, n, np, forward_only=True
                             )
                             esb = max(
                                 [
@@ -142,72 +125,45 @@ class Planner:
                                     )
                                     for device in device_group
                                 ]
-                            ) + (
-                                self.profiler.get_transmission_time(
-                                    (
-                                        layers[j]
-                                        if not (
-                                            isinstance(layers[j], nn.ReLU)
-                                            and layers[j].inplace
-                                        )
-                                        else layers[j - 1]
-                                    ),
-                                    self.profiler.get_mean_d2d_bandwidth(
-                                        devices, devices[0:np], devices[np : n + 1]
-                                    ),
-                                    backward_only=True,
-                                )
-                                if j < len(layers)
-                                else 0
+                            ) + self._get_transmission_time_for_layer(
+                                layers, devices, j, n, np, backward_only=True
                             )
                             ef[(l, n, lp, np, p)] = esf
                             eb[(l, n, lp, np, p)] = esb
 
                             if p == 0:
-                                dm = p
-                                edmf = esf
-                                edmb = esb
+                                dm[(l, n, lp, np, p)] = (esf, esb, p)
                             else:
-                                prev_dm = dm
-                                dm = max(
+                                prev = (
+                                    Q[(lp, np, p - 1)][:5]
+                                    if p > 1
+                                    else (lp, np, 0, 0, 0)
+                                )
+                                prev_edmf, prev_edmb, prev_dmp = dm[prev]
+                                dm[(l, n, lp, np, p)] = max(
                                     [
                                         (
-                                            dm,
-                                            num_micro_batches * (edmf + edmb)
+                                            (prev_edmf, prev_edmb, prev_dmp),
+                                            num_micro_batches * (prev_edmf + prev_edmb)
                                             + sum(
                                                 [
                                                     (
                                                         ef[(l, n, lp, np, i)]
                                                         + eb[(l, n, lp, np, i)]
                                                     )
-                                                    for i in range(1, dm + 1)
+                                                    for i in range(1, prev_dmp + 1)
                                                 ]
                                             ),
                                         ),
-                                        (p, num_micro_batches * (esf + esb)),
                                         (
-                                            p,
+                                            (esf, esb, p),
+                                            num_micro_batches * (esf + esb),
+                                        ),
+                                        (
+                                            (esf, esb, p),
                                             num_micro_batches
-                                            * (
-                                                self.profiler.get_transmission_time(
-                                                    (
-                                                        layers[j]
-                                                        if not (
-                                                            isinstance(
-                                                                layers[j], nn.ReLU
-                                                            )
-                                                            and layers[j].inplace
-                                                        )
-                                                        else layers[j - 1]
-                                                    ),
-                                                    self.profiler.get_mean_d2d_bandwidth(
-                                                        devices,
-                                                        devices[0:np],
-                                                        devices[np : n + 1],
-                                                    ),
-                                                )
-                                                if j < len(layers)
-                                                else 0
+                                            * self._get_transmission_time_for_layer(
+                                                layers, devices, j, n, np
                                             )
                                             + (esf + esb),
                                         ),
@@ -215,9 +171,7 @@ class Planner:
                                     key=lambda x: x[1],
                                 )[0]
 
-                                if prev_dm != dm:
-                                    edmf = esf
-                                    edmb = esb
+                            edmf, edmb, dmp = dm[(l, n, lp, np, p)]
 
                             tsw = sum([ef[(l, n, lp, np, i)] for i in range(0, p)])
 
@@ -243,32 +197,29 @@ class Planner:
                                 + sum(
                                     [
                                         (ef[(l, n, lp, np, i)] + eb[(l, n, lp, np, i)])
-                                        for i in range(p, dm)
+                                        for i in range(p, dmp)
                                     ]
                                 )
                                 - sum(
                                     [
                                         (ef[(l, n, lp, np, i)] + eb[(l, n, lp, np, i)])
-                                        for i in range(dm, p)
+                                        for i in range(dmp, p)
                                     ]
                                 )
                             )
 
                             hpp_round_latency = tsw + tsa + tse
+
                             prev_hpp_round_latency = (
-                                Q[(lp, np, p - 1)][-1][0]
-                                if p > 1
-                                else (
-                                    Qt[(lp, np, 0, 0, 0)][0]
-                                    if p == 1
-                                    else INFEASIBLE_LATENCY
-                                )
+                                Q[(lp, np, p)][-1][0] if p > 0 else INFEASIBLE_LATENCY
                             )
                             if (
-                                hpp_round_latency > prev_hpp_round_latency
+                                hpp_round_latency < prev_hpp_round_latency
                                 and prev_hpp_round_latency < INFEASIBLE_LATENCY
                             ):
+                                # keep max latency
                                 hpp_round_latency = prev_hpp_round_latency
+
                             Qt[(l, n, lp, np, p)] = (
                                 hpp_round_latency,
                                 samples_allocated,
@@ -280,8 +231,8 @@ class Planner:
                     prev_stage = p - 1
                     prev_stage_candidates = [
                         (l, n, lp, np, prev_stage, Qt[(l, n, lp, np, prev_stage)])
-                        for np in range(n + 1 if prev_stage > 0 else 1)
-                        for lp in range(l + 1 if prev_stage > 0 else 1)
+                        for np in range(n + 1)
+                        for lp in range(l + 1)
                         if Qt[(l, n, lp, np, prev_stage)][0] < INFEASIBLE_LATENCY
                     ]
                     if prev_stage_candidates:
@@ -308,6 +259,28 @@ class Planner:
         )[0]
 
         return (Q, min_p)
+
+    def _get_transmission_time_for_layer(
+        self, layers, devices, lt, n, np, forward_only=False, backward_only=False
+    ):
+        return (
+            self.profiler.get_transmission_time(
+                (
+                    layers[lt]
+                    if not (isinstance(layers[lt], nn.ReLU) and layers[lt].inplace)
+                    else layers[lt - 1]
+                ),
+                self.profiler.get_mean_d2d_bandwidth(
+                    devices,
+                    devices[0:np],
+                    devices[np : n + 1],
+                ),
+                forward_only=forward_only,
+                backward_only=backward_only,
+            )
+            if lt < len(layers)
+            else 0
+        )
 
     def _decode_result(self, result, Q, num_stages):
         l, n, lp, np, p, v = result

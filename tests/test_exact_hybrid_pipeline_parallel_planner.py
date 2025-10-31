@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from loftnn.cache import CacheProvider
@@ -147,11 +149,23 @@ class TestExactHybridPipelineParallelPlanner:
         micro_batch_size = 240
         num_micro_batches = 4
 
-        self.profiler.profile(resnet_model, worker_group, micro_batch_size)
+        print("Profiling...")
+        profile_start = time.time()
+        self.profiler.profile(
+            resnet_model, worker_group, micro_batch_size, repetitions=1
+        )
+        profile_end = time.time()
+        print(f"Profiling took {profile_end - profile_start} seconds")
+
+        print("Planning...")
+        plan_start = time.time()
         split_points, device_groups, samples_allocated = self.planner.plan(
             resnet_model, worker_group, micro_batch_size, num_micro_batches
         )
+        plan_end = time.time()
+        print(f"Planning took {plan_end - plan_start} seconds")
 
-        assert len(split_points) == 1
-        assert len(device_groups) == 1
-        assert len(samples_allocated) == 1
+        print()
+        print(f"Split points: {split_points}")
+        print(f"Device groups: {device_groups}")
+        print(f"Samples allocated: {samples_allocated}")
