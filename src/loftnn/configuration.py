@@ -39,3 +39,10 @@ class PipelineConfiguration:
     num_microbatches: int
     microbatch_sample: Tensor
     loss_fn: Callable
+
+
+@dataclass(frozen=True)
+class HybridPipelineConfiguration:
+    num_microbatches: int
+    microbatch_sample: Tensor
+    loss_fn: Callable

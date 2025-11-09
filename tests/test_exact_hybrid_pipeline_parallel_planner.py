@@ -141,10 +141,16 @@ class TestExactHybridPipelineParallelPlanner:
         from torchvision.models import resnet50
 
         resnet_model = resnet50(weights=None)
-        worker1 = Worker(rank=0, compute_capacity=1 / 2000, available_memory=4 * 80)
-        worker2 = Worker(rank=1, compute_capacity=1 / 1000, available_memory=4 * 160)
+        num_workers = 6
+        workers = [
+            Worker(rank=i, compute_capacity=1 / 1000, available_memory=4 * 80)
+            for i in range(num_workers)
+        ]
+        d2d_bandwidths = {
+            (workers[i], workers[j]): 1 for i in range(num_workers) for j in range(i + 1, num_workers)
+        }
         worker_group = WorkerGroup(
-            workers=[worker1, worker2], d2d_bandwidths={(worker1, worker2): 1}
+            workers=workers, d2d_bandwidths=d2d_bandwidths
         )
         micro_batch_size = 240
         num_micro_batches = 4

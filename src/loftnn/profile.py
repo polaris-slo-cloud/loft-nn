@@ -3,12 +3,17 @@ import time
 import torch
 import torch.nn as nn
 
-from torch.nn import ReLU
+from torch.nn import Embedding, ReLU
 
 from loftnn.cache import CacheProvider, CacheType
 from loftnn.sample_allocation import SampleAllocator
 from loftnn.types import Worker, WorkerGroup
-from loftnn.model_utils import model_to_layers, random_layer_input
+from loftnn.model_utils import (
+    model_to_layers,
+    random_layer_input,
+    repeat_backward_execution,
+    repeat_forward_execution,
+)
 
 
 class Profiler:
@@ -129,30 +134,19 @@ class Profiler:
     def _profile_forward_execution_time(
         self, layer: nn.Module, worker: Worker, sample_size: int, repetitions: int
     ) -> float:
-        execution_times = []
         cache = self.cache_provider.get_cache(CacheType.forward_execution_time)
         if (layer, worker, sample_size) in cache:
             return
 
         layer.eval()
-        for _ in range(repetitions):
-            x = random_layer_input(layer, sample_size)
-
-            with torch.no_grad():
-                start = time.time()
-                _ = layer(x)
-                end = time.time()
-
-            execution_time = end - start
-            execution_times.append(execution_time)
+        execution_time = repeat_forward_execution(layer, sample_size, repetitions)
         layer.train()
 
-        cache[(layer, worker, sample_size)] = sum(execution_times) / repetitions
+        cache[(layer, worker, sample_size)] = execution_time
 
     def _profile_backward_execution_time(
         self, layer: nn.Module, worker: Worker, sample_size: int, repetitions: int
     ) -> float:
-        execution_times = []
         cache = self.cache_provider.get_cache(CacheType.backward_execution_time)
         if (layer, worker, sample_size) in cache:
             return
@@ -162,22 +156,15 @@ class Profiler:
                 cache[(layer, worker, sample_size)] = 0
                 return
 
+        if isinstance(layer, Embedding):
+            cache[(layer, worker, sample_size)] = 0
+            return
+
         layer.eval()
-        for _ in range(repetitions):
-            x = random_layer_input(layer, sample_size)
-            x.requires_grad = True
-
-            y = layer(x)
-
-            start = time.time()
-            y.mean().backward()
-            end = time.time()
-
-            execution_time = end - start
-            execution_times.append(execution_time)
+        execution_time = repeat_backward_execution(layer, sample_size, repetitions)
         layer.train()
 
-        cache[(layer, worker, sample_size)] = sum(execution_times) / repetitions
+        cache[(layer, worker, sample_size)] = execution_time
 
     def _estimate_transmission_time(
         self, layer: nn.Module, d2d_bandwidth: int, forward_only, backward_only
@@ -193,6 +180,10 @@ class Profiler:
             if layer.inplace:
                 cache[(layer, d2d_bandwidth, forward_only, backward_only)] = 0
                 return
+
+        if isinstance(layer, Embedding):
+            cache[(layer, d2d_bandwidth, forward_only, backward_only)] = 0
+            return
 
         size_intermediate_tensors = (
             (

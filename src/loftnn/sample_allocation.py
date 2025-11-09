@@ -55,16 +55,15 @@ class SampleAllocator:
         compute_capacity = {d: d.compute_capacity for d in device_group}
         available_memory = {d: d.available_memory for d in device_group}
 
-        for d in device_group:
+        for idx, d in enumerate(device_group):
             batch_size[d] = min(d.batch_size(), beta)
+            compute_capacity_fraction = compute_capacity[d] / (
+                sum([compute_capacity[dev] for dev in device_group])
+            )
+            if beta % 2 == 1 and compute_capacity_fraction == 0.5:
+                compute_capacity_fraction = 0.5001 if idx % 2 == 0 else 0.4999
             delta[d] = min(
-                round(
-                    (
-                        compute_capacity[d]
-                        / (sum([compute_capacity[dev] for dev in device_group]))
-                    )
-                    * beta
-                ),
+                round(compute_capacity_fraction * beta),
                 batch_size[d],
             )
             samples_allocated[d] = samples_allocated[d] + delta[d]
@@ -84,12 +83,16 @@ class SampleAllocator:
         done = False
         while not done:
             old_straggler = device_group.get_slowest()
-            fastest_device_with_memory = device_group.get_fastest_with_memory(
-                samples_to_transfer
-            )
-            samples_allocated[fastest_device_with_memory] += samples_to_transfer
-            samples_allocated[old_straggler] -= samples_to_transfer
+
+            if samples_allocated[old_straggler] - samples_to_transfer > 0:
+                fastest_device_with_memory = device_group.get_fastest_with_memory(
+                    samples_to_transfer
+                )
+                samples_allocated[fastest_device_with_memory] += samples_to_transfer
+                samples_allocated[old_straggler] -= samples_to_transfer
+
             device_group = device_group.sorted(key=lambda d: samples_allocated[d])
+
             new_straggler = device_group.get_slowest()
             if not new_straggler.is_faster(old_straggler):
                 done = True
