@@ -1,12 +1,9 @@
+import torch
 import torch.distributed as dist
 import torch.nn as nn
 
 from torch.distributed import init_process_group, destroy_process_group
-from torch.distributed.pipelining import (
-    pipeline,
-    SplitPoint,
-    ScheduleGPipe,
-)
+from torch.distributed.pipelining import pipeline, SplitPoint
 
 from torch.nn.parallel import DistributedDataParallel as DDP
 
@@ -67,7 +64,9 @@ class HybridPipelineParallel(nn.Module):
         cache_provider = CacheProvider()
         sample_allocator = SampleAllocator(cache_provider=cache_provider)
         profiler = Profiler(
-            cache_provider=cache_provider, sample_allocator=sample_allocator
+            cache_provider=cache_provider,
+            sample_allocator=sample_allocator,
+            distributed=True,
         )
         planner = Planner(profiler=profiler, sample_allocator=sample_allocator)
         return profiler, planner
@@ -75,27 +74,41 @@ class HybridPipelineParallel(nn.Module):
     def compute_plan(self):
         collector = WorkerDataCollector()
         num_workers = self.process_config.world_size
+        micro_batch_size = self.hybrid_pipeline_config.microbatch_sample.shape[0]
 
         compute_capacities = collector.collect_compute_capacities(num_workers)
         available_memory = collector.collect_available_memory(self.device, num_workers)
         d2d_bandwidths = collector.collect_d2d_bandwidths(num_workers)
 
-        split_points, device_groups, samples_allocated = None, None, None
-
         if self.process_config.rank == 0:
-            profiler, planner = self._create_profiler_and_planner()
-
             worker_group = self._create_worker_group(
                 compute_capacities, available_memory, d2d_bandwidths
             )
+            object_list = [worker_group]
+            dist.broadcast_object_list(object_list, src=0)
+        else:
+            object_list = [None]
+            dist.broadcast_object_list(object_list, src=0)
+            worker_group = object_list[0]
 
-            micro_batch_size = self.hybrid_pipeline_config.microbatch_sample.shape[0]
+        profiler, planner = self._create_profiler_and_planner()
+        split_points, device_groups, samples_allocated = None, None, None
+
+        profiler.profile(self.model, worker_group, micro_batch_size)
+
+        if self.process_config.rank == 0:
             num_microbatches = self.hybrid_pipeline_config.num_microbatches
 
-            profiler.profile(self.model, worker_group, micro_batch_size)
             split_points, device_groups, samples_allocated = planner.plan(
                 self.model, worker_group, micro_batch_size, num_microbatches
             )
+
+            object_list = [split_points, device_groups, samples_allocated]
+            dist.broadcast_object_list(object_list, src=0)
+        else:
+            object_list = [None, None, None]
+            dist.broadcast_object_list(object_list, src=0)
+            split_points, device_groups, samples_allocated = object_list
 
         return split_points, device_groups, samples_allocated
 
@@ -147,9 +160,7 @@ class HybridPipelineParallel(nn.Module):
                 pp_group.rank(), self.device, pp_group
             )
         else:
-            device_group_start = next(
-                i for i in reversed(range(world_rank)) if device_group_mask[i] == 1
-            )
+            device_group_start = self._device_group_start(device_group_mask)
             pipeline_stage_train = pipe.build_stage(
                 device_group_start, self.device, group=pp_group
             )
@@ -157,17 +168,18 @@ class HybridPipelineParallel(nn.Module):
                 device_group_start, self.device, group=pp_group
             )
 
-        model = pipeline_stage_train.submod
-        if world_rank in ddp_ranks and device_group_mask[world_rank] <= 1:
-            ddp_model = DDP(
-                model,
-                device_ids=None,
-                process_group=ddp_group,
-                find_unused_parameters=True,
-                broadcast_buffers=False,
-            )
-            ddp_model.graph = model.graph
-            pipeline_stage_train.submod = ddp_model
+        for pipeline_stage in [pipeline_stage_train, pipeline_stage_eval]:
+            model = pipeline_stage.submod
+            if world_rank in ddp_ranks and device_group_mask[world_rank] <= 1:
+                ddp_model = DDP(
+                    model,
+                    device_ids=None,
+                    process_group=ddp_group,
+                    find_unused_parameters=True,
+                    broadcast_buffers=False,
+                )
+                ddp_model.graph = model.graph
+                pipeline_stage.submod = ddp_model
 
         return pipeline_stage_train, pipeline_stage_eval
 
@@ -178,6 +190,7 @@ class HybridPipelineParallel(nn.Module):
         ddp_ranks,
         ddp_group,
         device_group_mask,
+        microbatch_split_at,
     ):
         world_rank = self.process_config.rank
         world_size = self.process_config.world_size
@@ -216,6 +229,7 @@ class HybridPipelineParallel(nn.Module):
         pipeline_schedule_train = ScheduleHybridPipelineParallel1F1B(
             pipeline_stage_train,
             n_microbatches=self.hybrid_pipeline_config.num_microbatches,
+            microbatch_split_at=microbatch_split_at,
             ddp_world_ranks=ddp_ranks,
             ddp_group=ddp_group,
             prev_stage_is_ddp=prev_stage_is_ddp,
@@ -225,12 +239,26 @@ class HybridPipelineParallel(nn.Module):
             loss_fn=self.hybrid_pipeline_config.loss_fn,
         )
 
-        pipeline_schedule_eval = ScheduleGPipe(
+        pipeline_schedule_eval = ScheduleHybridPipelineParallel1F1B(
             pipeline_stage_eval,
             n_microbatches=self.hybrid_pipeline_config.num_microbatches,
+            microbatch_split_at=microbatch_split_at,
+            ddp_world_ranks=ddp_ranks,
+            ddp_group=ddp_group,
+            prev_stage_is_ddp=prev_stage_is_ddp,
+            next_stage_is_ddp=next_stage_is_ddp,
+            prev_non_ddp_stage_world_rank=prev_non_ddp_stage_world_rank,
+            next_non_ddp_stage_world_rank=next_non_ddp_stage_world_rank,
         )
 
         return pipeline_schedule_train, pipeline_schedule_eval
+
+    def _device_group_start(self, device_group_mask):
+        return next(
+            i
+            for i in reversed(range(self.process_config.rank))
+            if device_group_mask[i] == 1
+        )
 
     def prepare_schedule(
         self,
@@ -254,10 +282,33 @@ class HybridPipelineParallel(nn.Module):
         ddp_group = dist.new_group(ranks=ddp_ranks)
 
         microbatch_sample = self.hybrid_pipeline_config.microbatch_sample
+
+        stage_idx = (
+            pp_group.rank()
+            if world_rank in pp_ranks
+            else (
+                self._device_group_start(device_group_mask)
+                if world_rank in ddp_ranks
+                else -1
+            )
+        )
+        microbatch_split = [
+            samples_allocated[i][worker]
+            for i in range(len(samples_allocated))
+            for worker in samples_allocated[i].keys()
+            if i == stage_idx
+        ]
+        microbatch_split_at = torch.cumsum(torch.tensor(microbatch_split), dim=0)
+
+        if sum(microbatch_split) != microbatch_sample.shape[0]:
+            raise ValueError(
+                f"Mismatch between samples allocated in stage {stage_idx} and microbatch sample shape"
+            )
+
         if world_rank in ddp_ranks:
-            microbatch_sample = microbatch_sample.chunk(len(ddp_ranks))[
-                ddp_group.rank()
-            ]
+            microbatch_sample = torch.tensor_split(
+                microbatch_sample, microbatch_split_at
+            )[ddp_group.rank()]
 
         pipe = self._build_pipe(split_points, microbatch_sample)
 
@@ -272,10 +323,13 @@ class HybridPipelineParallel(nn.Module):
             ddp_ranks,
             ddp_group,
             device_group_mask,
+            microbatch_split_at,
         )
         self.pipeline_schedule_train = pipeline_schedule_train
         self.pipeline_schedule_eval = pipeline_schedule_eval
 
+        self.microbatch_split_at = microbatch_split_at
+        self.ddp_group = ddp_group
         self.is_first_stage_ddp = (
             sum(device_group_mask[i] for i in reversed(range(0, world_rank + 1))) <= 1
         )
@@ -313,7 +367,22 @@ class HybridPipelineParallel(nn.Module):
                 loss = sum(current_losses) / len(current_losses)
             else:
                 logits = self.pipeline_schedule_eval.step()
-                loss = self.pipeline_config.loss_fn(logits, Y)
+                if isinstance(self.model, DDP):
+                    Y_mbs = list(
+                        torch.tensor_split(
+                            Y, self.hybrid_pipeline_config.num_microbatches
+                        )
+                    )
+                    Y_ddp_split = [
+                        torch.tensor_split(Y_mb, self.microbatch_split_at)[
+                            self.ddp_group.rank()
+                        ]
+                        for Y_mb in Y_mbs
+                    ]
+                    Y_ddp = torch.cat(Y_ddp_split)
+                    loss = self.hybrid_pipeline_config.loss_fn(logits, Y_ddp)
+                else:
+                    loss = self.hybrid_pipeline_config.loss_fn(logits, Y)
         else:
             pipeline_schedule.step()
 

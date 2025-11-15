@@ -1,12 +1,12 @@
 from enum import Enum
 
-import torch.nn as nn
-
 from loftnn.types import Worker, WorkerGroup
 
-ForwardExecutionTimeCache = dict[tuple[nn.Module, Worker, int], float]
-BackwardExecutionTimeCache = dict[tuple[nn.Module, Worker, int], float]
-TransmissionTimeCache = dict[tuple[nn.Module, int, bool, bool], float]
+LayerId = str
+
+ForwardExecutionTimeCache = dict[tuple[LayerId, Worker, int], float]
+BackwardExecutionTimeCache = dict[tuple[LayerId, Worker, int], float]
+TransmissionTimeCache = dict[tuple[LayerId, int, bool, bool], float]
 SampleAllocationCache = dict[tuple[WorkerGroup, int], dict[Worker, int]]
 
 

@@ -17,7 +17,9 @@ class TestExactHybridPipelineParallelPlanner:
         cache_provider = CacheProvider()
         sample_allocator = SampleAllocator(cache_provider=cache_provider)
         self.profiler = Profiler(
-            cache_provider=cache_provider, sample_allocator=sample_allocator
+            cache_provider=cache_provider,
+            sample_allocator=sample_allocator,
+            distributed=False,
         )
         self.planner = Planner(
             profiler=self.profiler, sample_allocator=sample_allocator
@@ -147,11 +149,11 @@ class TestExactHybridPipelineParallelPlanner:
             for i in range(num_workers)
         ]
         d2d_bandwidths = {
-            (workers[i], workers[j]): 1 for i in range(num_workers) for j in range(i + 1, num_workers)
+            (workers[i], workers[j]): 1
+            for i in range(num_workers)
+            for j in range(i + 1, num_workers)
         }
-        worker_group = WorkerGroup(
-            workers=workers, d2d_bandwidths=d2d_bandwidths
-        )
+        worker_group = WorkerGroup(workers=workers, d2d_bandwidths=d2d_bandwidths)
         micro_batch_size = 240
         num_micro_batches = 4
 

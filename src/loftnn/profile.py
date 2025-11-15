@@ -1,6 +1,5 @@
-import time
-
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 
 from torch.nn import Embedding, ReLU
@@ -9,6 +8,7 @@ from loftnn.cache import CacheProvider, CacheType
 from loftnn.sample_allocation import SampleAllocator
 from loftnn.types import Worker, WorkerGroup
 from loftnn.model_utils import (
+    layer_id,
     model_to_layers,
     random_layer_input,
     repeat_backward_execution,
@@ -21,22 +21,26 @@ class Profiler:
     sample_allocator: SampleAllocator
 
     def __init__(
-        self, cache_provider: CacheProvider, sample_allocator: SampleAllocator
+        self,
+        cache_provider: CacheProvider,
+        sample_allocator: SampleAllocator,
+        distributed: bool = True,
     ):
         self.cache_provider = cache_provider
         self.sample_allocator = sample_allocator
+        self.distributed = distributed
 
     def get_forward_execution_time(
         self, layer: nn.Module, worker: Worker, sample_size: int
     ) -> float:
         cache = self.cache_provider.get_cache(CacheType.forward_execution_time)
-        return cache[(layer, worker, sample_size)]
+        return cache[(layer_id(layer), worker, sample_size)]
 
     def get_backward_execution_time(
         self, layer: nn.Module, worker: Worker, sample_size: int
     ) -> float:
         cache = self.cache_provider.get_cache(CacheType.backward_execution_time)
-        return cache[(layer, worker, sample_size)]
+        return cache[(layer_id(layer), worker, sample_size)]
 
     def get_transmission_time(
         self,
@@ -46,7 +50,7 @@ class Profiler:
         backward_only=False,
     ) -> float:
         cache = self.cache_provider.get_cache(CacheType.transmission_time)
-        return cache[(layer, d2d_bandwidth, forward_only, backward_only)]
+        return cache[(layer_id(layer), d2d_bandwidth, forward_only, backward_only)]
 
     def profile(
         self,
@@ -56,6 +60,7 @@ class Profiler:
         repetitions: int = 10,
     ):
         layers = model_to_layers(model)
+        rank = dist.get_rank() if self.distributed else 0
 
         for n in range(1, len(worker_group) + 1):
             for l in range(1, len(layers) + 1):
@@ -68,10 +73,11 @@ class Profiler:
                             l,
                             lp,
                             micro_batch_size,
+                            rank,
                             repetitions,
                         )
 
-                    if l < len(layers):
+                    if l < len(layers) and rank == 0:
                         transmission_layer = (
                             layers[l]
                             if not (
@@ -101,6 +107,31 @@ class Profiler:
                             backward_only=True,
                         )
 
+        if self.distributed:
+            forward_execution_time_cache = self.cache_provider.get_cache(
+                CacheType.forward_execution_time
+            )
+            backward_execution_time_cache = self.cache_provider.get_cache(
+                CacheType.backward_execution_time
+            )
+
+            if rank == 0:
+                gather_list = [None for _ in range(dist.get_world_size())]
+                dist.gather_object({}, gather_list, dst=0)
+
+                for worker_cache in gather_list:
+                    forward_execution_time_cache.update(worker_cache)
+
+                gather_list = [None for _ in range(dist.get_world_size())]
+                dist.gather_object({}, gather_list, dst=0)
+
+                for worker_cache in gather_list:
+                    backward_execution_time_cache.update(worker_cache)
+            else:
+                gather_list = None
+                dist.gather_object(forward_execution_time_cache, gather_list, dst=0)
+                dist.gather_object(backward_execution_time_cache, gather_list, dst=0)
+
     def _profile_worker_subgroup(
         self,
         worker_subgroup: WorkerGroup,
@@ -108,6 +139,7 @@ class Profiler:
         l: int,
         lp: int,
         micro_batch_size: int,
+        rank: int,
         repetitions: int,
     ):
         self.sample_allocator.compute_allocation_of_micro_batch(
@@ -123,54 +155,55 @@ class Profiler:
 
         for worker in worker_subgroup:
             for la in range(lp, l):
-                self._profile_forward_execution_time(
-                    layers[la], worker, samples_allocated[worker], repetitions
-                )
+                if worker.rank == rank or not self.distributed:
+                    self._profile_forward_execution_time(
+                        layers[la], worker, samples_allocated[worker], repetitions
+                    )
 
-                self._profile_backward_execution_time(
-                    layers[la], worker, samples_allocated[worker], repetitions
-                )
+                    self._profile_backward_execution_time(
+                        layers[la], worker, samples_allocated[worker], repetitions
+                    )
 
     def _profile_forward_execution_time(
         self, layer: nn.Module, worker: Worker, sample_size: int, repetitions: int
     ) -> float:
         cache = self.cache_provider.get_cache(CacheType.forward_execution_time)
-        if (layer, worker, sample_size) in cache:
+        if (layer_id(layer), worker, sample_size) in cache:
             return
 
         layer.eval()
         execution_time = repeat_forward_execution(layer, sample_size, repetitions)
         layer.train()
 
-        cache[(layer, worker, sample_size)] = execution_time
+        cache[(layer_id(layer), worker, sample_size)] = execution_time
 
     def _profile_backward_execution_time(
         self, layer: nn.Module, worker: Worker, sample_size: int, repetitions: int
     ) -> float:
         cache = self.cache_provider.get_cache(CacheType.backward_execution_time)
-        if (layer, worker, sample_size) in cache:
+        if (layer_id(layer), worker, sample_size) in cache:
             return
 
         if isinstance(layer, ReLU):
             if layer.inplace:
-                cache[(layer, worker, sample_size)] = 0
+                cache[(layer_id(layer), worker, sample_size)] = 0
                 return
 
         if isinstance(layer, Embedding):
-            cache[(layer, worker, sample_size)] = 0
+            cache[(layer_id(layer), worker, sample_size)] = 0
             return
 
         layer.eval()
         execution_time = repeat_backward_execution(layer, sample_size, repetitions)
         layer.train()
 
-        cache[(layer, worker, sample_size)] = execution_time
+        cache[(layer_id(layer), worker, sample_size)] = execution_time
 
     def _estimate_transmission_time(
         self, layer: nn.Module, d2d_bandwidth: int, forward_only, backward_only
     ):
         cache = self.cache_provider.get_cache(CacheType.transmission_time)
-        if (layer, d2d_bandwidth, forward_only, backward_only) in cache:
+        if (layer_id(layer), d2d_bandwidth, forward_only, backward_only) in cache:
             return
 
         if d2d_bandwidth < 0:
@@ -178,11 +211,11 @@ class Profiler:
 
         if isinstance(layer, ReLU):
             if layer.inplace:
-                cache[(layer, d2d_bandwidth, forward_only, backward_only)] = 0
+                cache[(layer_id(layer), d2d_bandwidth, forward_only, backward_only)] = 0
                 return
 
         if isinstance(layer, Embedding):
-            cache[(layer, d2d_bandwidth, forward_only, backward_only)] = 0
+            cache[(layer_id(layer), d2d_bandwidth, forward_only, backward_only)] = 0
             return
 
         size_intermediate_tensors = (
@@ -198,7 +231,7 @@ class Profiler:
             ),
         )
 
-        cache[(layer, d2d_bandwidth, forward_only, backward_only)] = (
+        cache[(layer_id(layer), d2d_bandwidth, forward_only, backward_only)] = (
             (
                 size_intermediate_tensors[0].numel()
                 + size_intermediate_tensors[1].numel()

@@ -7,6 +7,10 @@ from torch.fx import symbolic_trace
 from torch.nn import AdaptiveAvgPool2d, BatchNorm2d, Embedding, MaxPool2d
 
 
+def layer_id(layer: nn.Module):
+    return str(layer)
+
+
 def model_to_layers(model: nn.Module, include_names=False):
     traced_model = symbolic_trace(model)
     layers = [
