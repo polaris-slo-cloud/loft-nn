@@ -64,6 +64,9 @@ class Planner:
                                 or (p == 0 and (np != 0 or lp != 0))
                                 or (p != 0 and (np == 0 or lp == 0))
                                 or (lp < p or np < p)
+                                or (
+                                    isinstance(layers[lp], nn.Embedding) and p > 0
+                                )  # cannot split at embedding
                             ):
                                 ef[(l, n, lp, np, p)] = 0
                                 eb[(l, n, lp, np, p)] = 0

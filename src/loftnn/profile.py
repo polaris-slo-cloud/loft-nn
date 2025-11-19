@@ -6,7 +6,7 @@ from torch.nn import Embedding, ReLU
 
 from loftnn.cache import CacheProvider, CacheType
 from loftnn.sample_allocation import SampleAllocator
-from loftnn.types import Worker, WorkerGroup
+from loftnn.types import Device, Worker, WorkerGroup
 from loftnn.model_utils import (
     layer_id,
     model_to_layers,
@@ -57,6 +57,7 @@ class Profiler:
         model: nn.Module,
         worker_group: WorkerGroup,
         micro_batch_size: int,
+        device: Device = Device.cpu,
         repetitions: int = 10,
     ):
         layers = model_to_layers(model)
@@ -70,6 +71,7 @@ class Profiler:
                         self._profile_worker_subgroup(
                             worker_subgroup,
                             layers,
+                            device,
                             l,
                             lp,
                             micro_batch_size,
@@ -136,6 +138,7 @@ class Profiler:
         self,
         worker_subgroup: WorkerGroup,
         layers: list[nn.Module],
+        device: Device,
         l: int,
         lp: int,
         micro_batch_size: int,
@@ -157,28 +160,49 @@ class Profiler:
             for la in range(lp, l):
                 if worker.rank == rank or not self.distributed:
                     self._profile_forward_execution_time(
-                        layers[la], worker, samples_allocated[worker], repetitions
+                        layers[la],
+                        device,
+                        worker,
+                        samples_allocated[worker],
+                        repetitions,
                     )
 
                     self._profile_backward_execution_time(
-                        layers[la], worker, samples_allocated[worker], repetitions
+                        layers[la],
+                        device,
+                        worker,
+                        samples_allocated[worker],
+                        repetitions,
                     )
 
     def _profile_forward_execution_time(
-        self, layer: nn.Module, worker: Worker, sample_size: int, repetitions: int
+        self,
+        layer: nn.Module,
+        device: Device,
+        worker: Worker,
+        sample_size: int,
+        repetitions: int,
     ) -> float:
         cache = self.cache_provider.get_cache(CacheType.forward_execution_time)
         if (layer_id(layer), worker, sample_size) in cache:
             return
 
         layer.eval()
-        execution_time = repeat_forward_execution(layer, sample_size, repetitions)
+        layer.to(device)
+        execution_time = repeat_forward_execution(
+            layer, device, sample_size, repetitions
+        )
         layer.train()
 
         cache[(layer_id(layer), worker, sample_size)] = execution_time
 
     def _profile_backward_execution_time(
-        self, layer: nn.Module, worker: Worker, sample_size: int, repetitions: int
+        self,
+        layer: nn.Module,
+        device: Device,
+        worker: Worker,
+        sample_size: int,
+        repetitions: int,
     ) -> float:
         cache = self.cache_provider.get_cache(CacheType.backward_execution_time)
         if (layer_id(layer), worker, sample_size) in cache:
@@ -194,7 +218,10 @@ class Profiler:
             return
 
         layer.eval()
-        execution_time = repeat_backward_execution(layer, sample_size, repetitions)
+        layer.to(device)
+        execution_time = repeat_backward_execution(
+            layer, device, sample_size, repetitions
+        )
         layer.train()
 
         cache[(layer_id(layer), worker, sample_size)] = execution_time
@@ -218,14 +245,15 @@ class Profiler:
             cache[(layer_id(layer), d2d_bandwidth, forward_only, backward_only)] = 0
             return
 
+        layer.to(Device.cpu)
         size_intermediate_tensors = (
             (
-                self._random_forward_output(layer, sample_size=1).shape
+                self._random_forward_output(layer, Device.cpu, sample_size=1).shape
                 if not backward_only
                 else torch.empty(0)
             ),
             (
-                self._random_backward_input(layer, sample_size=1).shape
+                self._random_backward_input(layer, Device.cpu, sample_size=1).shape
                 if not forward_only
                 else torch.empty(0)
             ),
@@ -240,8 +268,10 @@ class Profiler:
             / d2d_bandwidth
         )
 
-    def _random_forward_output(self, layer: nn.Module, sample_size: int):
-        x = random_layer_input(layer, sample_size)
+    def _random_forward_output(
+        self, layer: nn.Module, device: Device, sample_size: int
+    ):
+        x = random_layer_input(layer, device, sample_size)
         layer.eval()
 
         with torch.no_grad():
@@ -251,8 +281,10 @@ class Profiler:
 
         return y
 
-    def _random_backward_input(self, layer: nn.Module, sample_size: int):
-        x = random_layer_input(layer, sample_size)
+    def _random_backward_input(
+        self, layer: nn.Module, device: Device, sample_size: int
+    ):
+        x = random_layer_input(layer, device, sample_size)
         x.requires_grad = True
         layer.eval()
 

@@ -1,31 +1,29 @@
 import time
 
-import psutil
-
 import torch
 import torch.distributed as dist
 import torch.nn as nn
 
 from loftnn.model_utils import repeat_forward_execution
 from loftnn.types import Device
+from loftnn.worker_utils import available_memory
 
 
 class WorkerDataCollector:
-    def collect_compute_capacities(self, num_workers: int) -> dict[int, int]:
-        layer = nn.Linear(10000, 10000)
-        execution_time = repeat_forward_execution(layer, sample_size=10, repetitions=3)
+    def collect_compute_capacities(
+        self, device: Device, num_workers: int
+    ) -> dict[int, int]:
+        layer = nn.Linear(10000, 10000).to(device)
+        execution_time = repeat_forward_execution(
+            layer, device, sample_size=10, repetitions=3
+        )
         compute_capacity = 1 / execution_time
         return self._collect_from_workers(compute_capacity, num_workers)
 
     def collect_available_memory(
         self, device: Device, num_workers: int
     ) -> dict[int, int]:
-        available_memory = (
-            psutil.virtual_memory().available
-            if device == Device.cpu
-            else torch.cuda.mem_get_info()[0] if device == Device.cuda else -1
-        )
-        return self._collect_from_workers(available_memory, num_workers)
+        return self._collect_from_workers(available_memory(device), num_workers)
 
     def collect_d2d_bandwidths(self, num_workers: int) -> dict[tuple[int, int], int]:
         size = 1000000

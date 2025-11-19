@@ -6,6 +6,8 @@ import torch.nn as nn
 from torch.fx import symbolic_trace
 from torch.nn import AdaptiveAvgPool2d, BatchNorm2d, Embedding, MaxPool2d
 
+from loftnn.types import Device
+
 
 def layer_id(layer: nn.Module):
     return str(layer)
@@ -21,7 +23,7 @@ def model_to_layers(model: nn.Module, include_names=False):
     return layers if include_names else [layer for (_, layer) in layers]
 
 
-def random_layer_input(layer: nn.Module, sample_size: int):
+def random_layer_input(layer: nn.Module, device: Device, sample_size: int):
     # Generate a random input tensor based on the layer's expected input shape
     input_shape = (sample_size, 1000)
     use_int = False
@@ -40,16 +42,20 @@ def random_layer_input(layer: nn.Module, sample_size: int):
     elif isinstance(layer, Embedding):
         use_int = True
 
-    return torch.randint(0, 10, input_shape) if use_int else torch.randn(input_shape)
+    return (
+        torch.randint(0, 10, input_shape, device=device)
+        if use_int
+        else torch.randn(input_shape, device=device)
+    )
 
 
 def repeat_forward_execution(
-    layer: nn.Module, sample_size: int, repetitions: int
+    layer: nn.Module, device: Device, sample_size: int, repetitions: int
 ) -> float:
     execution_times = []
 
     for _ in range(repetitions):
-        x = random_layer_input(layer, sample_size)
+        x = random_layer_input(layer, device, sample_size)
 
         with torch.no_grad():
             start = time.time()
@@ -63,12 +69,12 @@ def repeat_forward_execution(
 
 
 def repeat_backward_execution(
-    layer: nn.Module, sample_size: int, repetitions: int
+    layer: nn.Module, device: Device, sample_size: int, repetitions: int
 ) -> float:
     execution_times = []
 
     for _ in range(repetitions):
-        x = random_layer_input(layer, sample_size)
+        x = random_layer_input(layer, device, sample_size)
         x.requires_grad = True
 
         y = layer(x)

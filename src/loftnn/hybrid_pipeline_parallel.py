@@ -76,7 +76,9 @@ class HybridPipelineParallel(nn.Module):
         num_workers = self.process_config.world_size
         micro_batch_size = self.hybrid_pipeline_config.microbatch_sample.shape[0]
 
-        compute_capacities = collector.collect_compute_capacities(num_workers)
+        compute_capacities = collector.collect_compute_capacities(
+            self.device, num_workers
+        )
         available_memory = collector.collect_available_memory(self.device, num_workers)
         d2d_bandwidths = collector.collect_d2d_bandwidths(num_workers)
 
@@ -94,7 +96,7 @@ class HybridPipelineParallel(nn.Module):
         profiler, planner = self._create_profiler_and_planner()
         split_points, device_groups, samples_allocated = None, None, None
 
-        profiler.profile(self.model, worker_group, micro_batch_size)
+        profiler.profile(self.model, worker_group, micro_batch_size, device=self.device)
 
         if self.process_config.rank == 0:
             num_microbatches = self.hybrid_pipeline_config.num_microbatches
@@ -154,18 +156,18 @@ class HybridPipelineParallel(nn.Module):
 
         if world_rank in pp_ranks:
             pipeline_stage_train = pipe.build_stage(
-                pp_group.rank(), self.device, pp_group
+                pp_group.rank(), Device.cpu, pp_group
             )
             pipeline_stage_eval = pipe.build_stage(
-                pp_group.rank(), self.device, pp_group
+                pp_group.rank(), Device.cpu, pp_group
             )
         else:
             device_group_start = self._device_group_start(device_group_mask)
             pipeline_stage_train = pipe.build_stage(
-                device_group_start, self.device, group=pp_group
+                device_group_start, Device.cpu, group=pp_group
             )
             pipeline_stage_eval = pipe.build_stage(
-                device_group_start, self.device, group=pp_group
+                device_group_start, Device.cpu, group=pp_group
             )
 
         for pipeline_stage in [pipeline_stage_train, pipeline_stage_eval]:
