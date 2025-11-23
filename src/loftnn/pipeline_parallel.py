@@ -19,12 +19,10 @@ class PipelineParallel(nn.Module):
         model: nn.Module,
         process_config: ProcessConfiguration,
         pipeline_config: PipelineConfiguration,
-        device: Device,
     ):
         super(PipelineParallel, self).__init__()
         self.process_config = process_config
         self.pipeline_config = pipeline_config
-        self.device = device
 
         init_process_group(
             backend=process_config.backend,
@@ -41,6 +39,8 @@ class PipelineParallel(nn.Module):
             mb_args=(pipeline_config.microbatch_sample,),
             split_spec=split_spec,
         )
+
+        device = Device.cpu  # all nodes must use cpu for building the stage
 
         pipeline_stage_train = pipe.build_stage(
             process_config.rank, device, torch.distributed.group.WORLD

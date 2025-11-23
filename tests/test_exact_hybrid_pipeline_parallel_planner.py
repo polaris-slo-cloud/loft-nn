@@ -25,7 +25,8 @@ class TestExactHybridPipelineParallelPlanner:
             profiler=self.profiler, sample_allocator=sample_allocator
         )
 
-    def test_plan(self):
+    @pytest.mark.parametrize("parallel", [False, True])
+    def test_plan(self, parallel):
         model = SimpleNN()
         worker1 = Worker(rank=0, compute_capacity=1 / 2000, available_memory=4 * 40)
         worker2 = Worker(rank=1, compute_capacity=1 / 1000, available_memory=4 * 20)
@@ -43,7 +44,7 @@ class TestExactHybridPipelineParallelPlanner:
 
         self.profiler.profile(model, worker_group, micro_batch_size)
         split_points, device_groups, samples_allocated = self.planner.plan(
-            model, worker_group, micro_batch_size, num_micro_batches
+            model, worker_group, micro_batch_size, num_micro_batches, parallel
         )
 
         # expected:
