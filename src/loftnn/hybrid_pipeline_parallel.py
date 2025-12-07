@@ -183,6 +183,9 @@ class HybridPipelineParallel(nn.Module):
                 ddp_model.graph = model.graph
                 pipeline_stage.submod = ddp_model
 
+            # skip initialization
+            pipeline_stage._get_init_p2p_neighbors_ops = lambda: []
+
         return pipeline_stage_train, pipeline_stage_eval
 
     def _build_schedules(

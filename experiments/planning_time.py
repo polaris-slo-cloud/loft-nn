@@ -1,4 +1,5 @@
 import argparse
+import logging
 
 import matplotlib.pyplot as plt
 
@@ -10,6 +11,8 @@ from loftnn.experiments import Experiment, ExperimentRunner, ExperimentVisualize
 from loftnn.profile import Profiler
 from loftnn.sample_allocation import SampleAllocator
 from loftnn.types import Worker, WorkerGroup
+
+logger = logging.getLogger(__name__)
 
 
 class PlanningTimeExperiment(Experiment):
@@ -51,14 +54,14 @@ class PlanningTimeExperiment(Experiment):
                 configuration
             )
 
-            print(f"Profiling for {name}...")
+            logger.info(f"Profiling for {name}...")
             profile_duration, _ = self.time(
                 lambda: self.profiler.profile(
                     model, worker_group, micro_batch_size, repetitions=1
                 )
             )
 
-            print(f"Sequential planning for {name}...")
+            logger.info(f"Sequential planning for {name}...")
             plan_duration_seq, (
                 split_points_seq,
                 device_groups_seq,
@@ -69,7 +72,7 @@ class PlanningTimeExperiment(Experiment):
                 )
             )
 
-            print(f"Parallel planning for {name}...")
+            logger.info(f"Parallel planning for {name}...")
             plan_duration_par, (
                 split_points_par,
                 device_groups_par,
@@ -84,7 +87,7 @@ class PlanningTimeExperiment(Experiment):
                 )
             )
 
-            print("Verifying...")
+            logger.info("Verifying...")
             assert split_points_seq == split_points_par
             assert device_groups_seq == device_groups_par
             assert samples_allocated_seq == samples_allocated_par
@@ -120,6 +123,7 @@ class PlanningTimeExperiment(Experiment):
 
 
 def main():
+    logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser()
     parser.add_argument("--visualize", action="store_true")
 

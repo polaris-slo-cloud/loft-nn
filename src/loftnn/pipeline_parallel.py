@@ -59,6 +59,10 @@ class PipelineParallel(nn.Module):
             n_microbatches=pipeline_config.num_microbatches,
         )
 
+        # skip initialization
+        pipeline_stage_train._get_init_p2p_neighbors_ops = lambda: []
+        pipeline_stage_eval._get_init_p2p_neighbors_ops = lambda: []
+
         self.pipeline_stage_train = pipeline_stage_train
         self.pipeline_schedule_train = pipeline_schedule_train
 

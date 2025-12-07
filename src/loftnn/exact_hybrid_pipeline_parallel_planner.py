@@ -4,16 +4,25 @@
 #   In Proceedings of the 30th Annual International Conference on Mobile Computing and Networking, ACM MobiCom ’24,
 #   page 312–326, New York, NY, USA, 2024. Association for Computing Machinery.
 
-from multiprocessing import Manager, Pool
+import logging
+import os
 
-from loftnn.sample_allocation import SampleAllocator
 import torch.nn as nn
+from torch.multiprocessing import get_context, Manager
 
-from loftnn.types import WorkerGroup
+from loftnn.logging import log_execution_time
 from loftnn.profile import Profiler
 from loftnn.model_utils import model_to_layers
+from loftnn.sample_allocation import SampleAllocator
+from loftnn.types import WorkerGroup
 
 INFEASIBLE_LATENCY = 10**20
+
+logger = logging.getLogger(__name__)
+
+
+def init_process(level):
+    logging.basicConfig(level=level)
 
 
 class Planner:
@@ -54,40 +63,40 @@ class Planner:
     ):
         (Q, Qt, ef, eb, dm) = ({}, {}, {}, {}, {})
 
+        state = dict()
         if parallel:
-            (manager, pool) = (Manager(), Pool())
-            (Q, Qt, ef, eb, dm) = tuple(manager.dict() for _ in range(5))
+            pool = get_context("spawn").Pool(
+                processes=os.cpu_count(),
+                initializer=init_process,
+                initargs=(logger.getEffectiveLevel(),),
+            )
+            manager = Manager()
+            state = manager.dict()
 
-        shared_state = (Q, Qt, ef, eb, dm)
+        state.update({"Q": Q, "Qt": Qt, "ef": ef, "eb": eb, "dm": dm})
 
-        for p in range(0, min(len(layers), len(devices)) + 1):
-            for n in range(1, len(devices) + 1):
-                for l in range(1, len(layers) + 1):
-                    nplps = [(np, lp) for np in range(n + 1) for lp in range(l + 1)]
+        for p in range(0, min(len(layers), len(devices))):
+            nls = [
+                (n, l)
+                for n in range(1, len(devices) + 1)
+                for l in range(1, len(layers) + 1)
+            ]
 
-                    if parallel:
-                        shared_state_updates = pool.starmap(
-                            self._plan,
-                            [
-                                (
-                                    layers,
-                                    devices,
-                                    micro_batch_size,
-                                    num_micro_batches,
-                                    p,
-                                    n,
-                                    l,
-                                    np,
-                                    lp,
-                                    shared_state,
-                                )
-                                for (np, lp) in nplps
-                            ],
-                        )
-                    else:
-                        shared_state_updates = []
-                        for np, lp in nplps:
-                            update = self._plan(
+            with log_execution_time("read_state", logger.info):
+                Q_c, Qt_c, ef_c, eb_c, dm_c = ({}, {}, {}, {}, {})
+                Q_c.update(state["Q"])
+                Qt_c.update(state["Qt"])
+                ef_c.update(state["ef"])
+                eb_c.update(state["eb"])
+                dm_c.update(state["dm"])
+            state_c = (Q_c, Qt_c, ef_c, eb_c, dm_c)
+
+            if parallel:
+                with log_execution_time("plan_nl_parallel", logger.info):
+                    state_updates = pool.starmap(
+                        self._plan_nl,
+                        [
+                            (
                                 layers,
                                 devices,
                                 micro_batch_size,
@@ -95,51 +104,47 @@ class Planner:
                                 p,
                                 n,
                                 l,
-                                np,
-                                lp,
-                                shared_state,
+                                state_c,
                             )
-                            shared_state_updates.append(update)
-
-                    base_update = shared_state_updates[0]
-                    (Qt_b, ef_b, eb_b, dm_b) = base_update
-                    for update in shared_state_updates[1:]:
-                        (Qt_u, ef_u, eb_u, dm_u) = update
-                        Qt_b.update(Qt_u)
-                        ef_b.update(ef_u)
-                        eb_b.update(eb_u)
-                        dm_b.update(dm_u)
-
-                    Qt.update(Qt_b)
-                    ef.update(ef_b)
-                    eb.update(eb_b)
-                    dm.update(dm_b)
-
-                    if p == 0:
-                        continue
-
-                    prev_stage = p - 1
-                    prev_stage_candidates = [
-                        (l, n, lp, np, prev_stage, Qt[(l, n, lp, np, prev_stage)])
-                        for np in range(n + 1)
-                        for lp in range(l + 1)
-                        if Qt[(l, n, lp, np, prev_stage)][0] < INFEASIBLE_LATENCY
-                    ]
-                    if prev_stage_candidates:
-                        Q[(l, n, p)] = min(
-                            prev_stage_candidates,
-                            key=lambda x: x[-1][0],
-                        )
-                    else:
-                        Q[(l, n, p)] = (
-                            l,
+                            for (n, l) in nls
+                        ],
+                    )
+            else:
+                with log_execution_time("plan_nl_sequential", logger.info):
+                    state_updates = []
+                    for n, l in nls:
+                        update = self._plan_nl(
+                            layers,
+                            devices,
+                            micro_batch_size,
+                            num_micro_batches,
+                            p,
                             n,
-                            0,
-                            0,
-                            prev_stage,
-                            (INFEASIBLE_LATENCY, {}),
+                            l,
+                            state_c,
                         )
+                        state_updates.append(update)
 
+            base_update = state_updates[0]
+            (Q_b, Qt_b, ef_b, eb_b, dm_b) = base_update
+            for update in state_updates[1:]:
+                (Q_u, Qt_u, ef_u, eb_u, dm_u) = update
+                Q_b.update(Q_u)
+                Qt_b.update(Qt_u)
+                ef_b.update(ef_u)
+                eb_b.update(eb_u)
+                dm_b.update(dm_u)
+
+            Q_b.update(Q_c)
+            Qt_b.update(Qt_c)
+            ef_b.update(ef_c)
+            eb_b.update(eb_c)
+            dm_b.update(dm_c)
+
+            with log_execution_time("write_state", logger.info):
+                state.update({"Q": Q_b, "Qt": Qt_b, "ef": ef_b, "eb": eb_b, "dm": dm_b})
+
+        Q = state["Q"]
         min_p = min(
             [
                 (p, Q[(len(layers), len(devices), p)])
@@ -151,10 +156,91 @@ class Planner:
         Q_r = {}
         Q_r.update(Q)
 
-        for state in shared_state:
+        for state in state.values():
             state.clear()
 
+        if parallel:
+            pool.close()
+
         return (Q_r, min_p)
+
+    def _plan_nl(
+        self,
+        layers,
+        devices,
+        micro_batch_size: int,
+        num_micro_batches: int,
+        p,
+        n,
+        l,
+        state,
+    ):
+        (Q, Qt, ef, eb, dm) = state
+
+        state_updates = []
+        for np in range(n + 1):
+            for lp in range(l + 1):
+                with log_execution_time(f"plan_{l}{n}{lp}{np}{p}", logger.info):
+                    update = self._plan(
+                        layers,
+                        devices,
+                        micro_batch_size,
+                        num_micro_batches,
+                        p,
+                        n,
+                        l,
+                        np,
+                        lp,
+                        state,
+                    )
+                    state_updates.append(update)
+
+        base_update = state_updates[0]
+        (Qt_b, ef_b, eb_b, dm_b) = base_update
+        for update in state_updates[1:]:
+            (Qt_u, ef_u, eb_u, dm_u) = update
+            Qt_b.update(Qt_u)
+            ef_b.update(ef_u)
+            eb_b.update(eb_u)
+            dm_b.update(dm_u)
+
+        Qt.update(Qt_b)
+        ef.update(ef_b)
+        eb.update(eb_b)
+        dm.update(dm_b)
+
+        updates = (
+            Q,
+            Qt,
+            ef,
+            eb,
+            dm,
+        )
+
+        # we computed Qt[(l, n, lp, np, p)], now compute Q[(l, n, p + 1)]
+        prev_stage = p
+        prev_stage_candidates = [
+            (l, n, lp, np, prev_stage, Qt[(l, n, lp, np, prev_stage)])
+            for np in range(n + 1)
+            for lp in range(l + 1)
+            if Qt[(l, n, lp, np, prev_stage)][0] < INFEASIBLE_LATENCY
+        ]
+        if prev_stage_candidates:
+            Q[(l, n, p + 1)] = min(
+                prev_stage_candidates,
+                key=lambda x: x[-1][0],
+            )
+        else:
+            Q[(l, n, p + 1)] = (
+                l,
+                n,
+                0,
+                0,
+                prev_stage,
+                (INFEASIBLE_LATENCY, {}),
+            )
+
+        return updates
 
     def _plan(
         self,
@@ -167,11 +253,11 @@ class Planner:
         l,
         np,
         lp,
-        shared_state,
+        state,
     ):
         # n - np devices execute layers l - lp and form a new step
 
-        (Q, Qt, ef, eb, dm) = shared_state
+        (Q, Qt, ef, eb, dm) = state
 
         (Qt_u, ef_u, eb_u, dm_u) = ({}, {}, {}, {})
         updates = (
@@ -179,7 +265,7 @@ class Planner:
             ef_u,
             eb_u,
             dm_u,
-        )  # updates to the shared state are collected here
+        )  # updates to the state are collected here
 
         if p == min(len(layers), len(devices)):
             # only take minimum of previous stage

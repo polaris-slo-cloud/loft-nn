@@ -1,8 +1,11 @@
 from abc import ABC, abstractmethod
 
+import logging
 import json
 import pprint
 import time
+
+logger = logging.getLogger(__name__)
 
 
 class Experiment(ABC):
@@ -30,25 +33,25 @@ class ExperimentRunner:
 
     @staticmethod
     def run_all():
-        print("Running experiments...")
+        logger.info("Running experiments...")
         experiments = Experiment.__subclasses__()
         experimental_results = {
             experiment.__name__: list(experiment().run()) for experiment in experiments
         }
 
-        print(f"\nExperimental results:")
-        pprint.pp(experimental_results)
+        logger.info(f"\nExperimental results:")
+        logger.info(pprint.pformat(experimental_results))
 
         with open("experimental_results.json", "w") as f:
             json.dump(experimental_results, f, indent=4)
-        print("\nSaved to experimental_results.json")
+        logger.info("\nSaved to experimental_results.json")
 
 
 class ExperimentVisualizer:
 
     @staticmethod
     def visualize_all():
-        print("Visualizing experiments...")
+        logger.info("Visualizing experiments...")
         experiments = Experiment.__subclasses__()
 
         for experiment in experiments:
