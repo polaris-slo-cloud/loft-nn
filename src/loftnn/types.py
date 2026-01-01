@@ -16,7 +16,7 @@ class Worker:
     available_memory: int
 
     def batch_size(self) -> int:
-        return self.available_memory // 4
+        return self.available_memory
 
     def is_faster(self, other) -> bool:
         return self.compute_capacity > other.compute_capacity
@@ -32,7 +32,7 @@ class WorkerGroup:
 
     def get_fastest_with_memory(self, samples_to_transfer):
         candidates = [
-            d for d in self.workers if d.available_memory >= samples_to_transfer * 4
+            d for d in self.workers if d.available_memory >= samples_to_transfer
         ]
         if not candidates:
             raise ValueError("No device has enough memory to transfer the samples")
@@ -57,7 +57,16 @@ class WorkerGroup:
 
     def __getitem__(self, index):
         worker_group = copy.copy(self)
-        worker_group.workers = self.workers[index]
+
+        if isinstance(index, int):
+            worker_group.workers = [self.workers[index]]
+        elif isinstance(index, list):
+            worker_group.workers = [
+                worker for worker in self.workers if worker.rank in index
+            ]
+        elif isinstance(index, slice):
+            worker_group.workers = self.workers[index]
+
         worker_group.d2d_bandwidths = {
             (worker1, worker2): bandwidth
             for (worker1, worker2), bandwidth in self.d2d_bandwidths.items()

@@ -6,9 +6,9 @@ import matplotlib.pyplot as plt
 from torchvision.models import resnet18, resnet50
 
 from loftnn.cache import CacheProvider
-from loftnn.exact_hybrid_pipeline_parallel_planner import Planner
+from loftnn.exact_hybrid_pipeline_parallel_planner import ExactPlanner
 from loftnn.experiments import Experiment, ExperimentRunner, ExperimentVisualizer
-from loftnn.profile import Profiler
+from loftnn.profile import ExactProfiler
 from loftnn.sample_allocation import SampleAllocator
 from loftnn.types import Worker, WorkerGroup
 
@@ -19,12 +19,12 @@ class PlanningTimeExperiment(Experiment):
     def __init__(self):
         cache_provider = CacheProvider()
         sample_allocator = SampleAllocator(cache_provider=cache_provider)
-        self.profiler = Profiler(
+        self.profiler = ExactProfiler(
             cache_provider=cache_provider,
             sample_allocator=sample_allocator,
             distributed=False,
         )
-        self.planner = Planner(
+        self.planner = ExactPlanner(
             profiler=self.profiler, sample_allocator=sample_allocator
         )
 

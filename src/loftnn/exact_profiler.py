@@ -1,3 +1,6 @@
+import logging
+import pickle
+
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -5,6 +8,7 @@ import torch.nn as nn
 from torch.nn import Embedding, ReLU
 
 from loftnn.cache import CacheProvider, CacheType
+from loftnn.profiler import Profiler, DEFAULT_DEVICE, DEFAULT_REPETITIONS
 from loftnn.sample_allocation import SampleAllocator
 from loftnn.types import Device, Worker, WorkerGroup
 from loftnn.model_utils import (
@@ -15,8 +19,12 @@ from loftnn.model_utils import (
     repeat_forward_execution,
 )
 
+INFINITE_BANDWIDTH = 10**20
 
-class Profiler:
+logger = logging.getLogger(__name__)
+
+
+class ExactProfiler(Profiler):
     cache_provider: CacheProvider
     sample_allocator: SampleAllocator
 
@@ -57,8 +65,8 @@ class Profiler:
         model: nn.Module,
         worker_group: WorkerGroup,
         micro_batch_size: int,
-        device: Device = Device.cpu,
-        repetitions: int = 10,
+        device: Device = DEFAULT_DEVICE,
+        repetitions: int = DEFAULT_REPETITIONS,
     ):
         layers = model_to_layers(model)
         rank = dist.get_rank() if self.distributed else 0
@@ -92,18 +100,21 @@ class Profiler:
                         )
                         self._estimate_transmission_time(
                             transmission_layer,
+                            device,
                             mean_d2d_bandwidth,
                             forward_only=False,
                             backward_only=False,
                         )
                         self._estimate_transmission_time(
                             transmission_layer,
+                            device,
                             mean_d2d_bandwidth,
                             forward_only=True,
                             backward_only=False,
                         )
                         self._estimate_transmission_time(
                             transmission_layer,
+                            device,
                             mean_d2d_bandwidth,
                             forward_only=False,
                             backward_only=True,
@@ -133,6 +144,12 @@ class Profiler:
                 gather_list = None
                 dist.gather_object(forward_execution_time_cache, gather_list, dst=0)
                 dist.gather_object(backward_execution_time_cache, gather_list, dst=0)
+
+        if logger.isEnabledFor(logging.INFO):
+            caches = vars(self.cache_provider)
+            with open("exact_profiler_caches.pickle", "wb") as handle:
+                pickle.dump(caches, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            logger.info("saved exact_profiler_caches.pickle")
 
     def _profile_worker_subgroup(
         self,
@@ -227,7 +244,12 @@ class Profiler:
         cache[(layer_id(layer), worker, sample_size)] = execution_time
 
     def _estimate_transmission_time(
-        self, layer: nn.Module, d2d_bandwidth: int, forward_only, backward_only
+        self,
+        layer: nn.Module,
+        device: Device,
+        d2d_bandwidth: int,
+        forward_only,
+        backward_only,
     ):
         cache = self.cache_provider.get_cache(CacheType.transmission_time)
         if (layer_id(layer), d2d_bandwidth, forward_only, backward_only) in cache:
@@ -245,28 +267,23 @@ class Profiler:
             cache[(layer_id(layer), d2d_bandwidth, forward_only, backward_only)] = 0
             return
 
-        layer.to(Device.cpu)
+        layer.to(device)
         size_intermediate_tensors = (
             (
-                self._random_forward_output(layer, Device.cpu, sample_size=1).shape
+                self._random_forward_output(layer, device, sample_size=1).shape
                 if not backward_only
                 else torch.empty(0)
             ),
             (
-                self._random_backward_input(layer, Device.cpu, sample_size=1).shape
+                self._random_backward_input(layer, device, sample_size=1).shape
                 if not forward_only
                 else torch.empty(0)
             ),
         )
 
         cache[(layer_id(layer), d2d_bandwidth, forward_only, backward_only)] = (
-            (
-                size_intermediate_tensors[0].numel()
-                + size_intermediate_tensors[1].numel()
-            )
-            * 4
-            / d2d_bandwidth
-        )
+            size_intermediate_tensors[0].numel() + size_intermediate_tensors[1].numel()
+        ) / (d2d_bandwidth / 4)
 
     def _random_forward_output(
         self, layer: nn.Module, device: Device, sample_size: int
@@ -302,9 +319,9 @@ class Profiler:
         worker_group_2: WorkerGroup,
     ) -> int:
         if worker_group_1 and not worker_group_2:
-            return 1_000_000_000
+            return INFINITE_BANDWIDTH
         if not worker_group_1 and worker_group_2:
-            return 1
+            return INFINITE_BANDWIDTH
 
         bandwidths = []
         for worker1 in worker_group_1:

@@ -6,13 +6,15 @@
 
 import logging
 import os
+import pickle
 
 import torch.nn as nn
 from torch.multiprocessing import get_context, Manager
 
+from loftnn.exact_profiler import ExactProfiler
 from loftnn.logging import log_execution_time
-from loftnn.profile import Profiler
 from loftnn.model_utils import model_to_layers
+from loftnn.planner import Planner
 from loftnn.sample_allocation import SampleAllocator
 from loftnn.types import WorkerGroup
 
@@ -25,11 +27,11 @@ def init_process(level):
     logging.basicConfig(level=level)
 
 
-class Planner:
-    profiler: Profiler
+class ExactPlanner(Planner):
+    profiler: ExactProfiler
     sample_allocator: SampleAllocator
 
-    def __init__(self, profiler: Profiler, sample_allocator: SampleAllocator):
+    def __init__(self, profiler: ExactProfiler, sample_allocator: SampleAllocator):
         self.profiler = profiler
         self.sample_allocator = sample_allocator
 
@@ -153,8 +155,15 @@ class Planner:
             key=lambda x: x[1][-1][0],
         )[0]
 
+        logger.info(f"got min_p={min_p}")
+
         Q_r = {}
         Q_r.update(Q)
+
+        if logger.isEnabledFor(logging.INFO):
+            with open("exact_planner_state.pickle", "wb") as handle:
+                pickle.dump(state, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            logger.info("saved exact_planner_state.pickle")
 
         for state in state.values():
             state.clear()
@@ -180,20 +189,19 @@ class Planner:
         state_updates = []
         for np in range(n + 1):
             for lp in range(l + 1):
-                with log_execution_time(f"plan_{l}{n}{lp}{np}{p}", logger.info):
-                    update = self._plan(
-                        layers,
-                        devices,
-                        micro_batch_size,
-                        num_micro_batches,
-                        p,
-                        n,
-                        l,
-                        np,
-                        lp,
-                        state,
-                    )
-                    state_updates.append(update)
+                update = self._plan(
+                    layers,
+                    devices,
+                    micro_batch_size,
+                    num_micro_batches,
+                    p,
+                    n,
+                    l,
+                    np,
+                    lp,
+                    state,
+                )
+                state_updates.append(update)
 
         base_update = state_updates[0]
         (Qt_b, ef_b, eb_b, dm_b) = base_update
@@ -237,7 +245,7 @@ class Planner:
                 0,
                 0,
                 prev_stage,
-                (INFEASIBLE_LATENCY, {}),
+                (INFEASIBLE_LATENCY, {}, {}),
             )
 
         return updates
@@ -282,7 +290,7 @@ class Planner:
         ):
             ef_u[(l, n, lp, np, p)] = 0
             eb_u[(l, n, lp, np, p)] = 0
-            Qt_u[(l, n, lp, np, p)] = (INFEASIBLE_LATENCY, {})
+            Qt_u[(l, n, lp, np, p)] = (INFEASIBLE_LATENCY, {}, {})
             return updates
 
         device_group = devices[np:n]
@@ -294,7 +302,7 @@ class Planner:
         except ValueError:
             ef_u[(l, n, lp, np, p)] = 0
             eb_u[(l, n, lp, np, p)] = 0
-            Qt_u[(l, n, lp, np, p)] = (INFEASIBLE_LATENCY, {})
+            Qt_u[(l, n, lp, np, p)] = (INFEASIBLE_LATENCY, {}, {})
             return updates
 
         i = lp
@@ -406,18 +414,23 @@ class Planner:
 
         hpp_round_latency = tsw + tsa + tse
 
+        is_max_latency = True
         prev_hpp_round_latency = Q[(lp, np, p)][-1][0] if p > 0 else INFEASIBLE_LATENCY
         if (
             hpp_round_latency < prev_hpp_round_latency
             and prev_hpp_round_latency < INFEASIBLE_LATENCY
         ):
             # keep max latency
+            is_max_latency = False
             hpp_round_latency = prev_hpp_round_latency
 
-        Qt_u[(l, n, lp, np, p)] = (
-            hpp_round_latency,
-            samples_allocated,
+        info = (
+            {"tsw": tsw, "tsa": tsa, "tse": tse, "is_max_latency": is_max_latency}
+            if logger.isEnabledFor(logging.INFO)
+            else {}
         )
+
+        Qt_u[(l, n, lp, np, p)] = (hpp_round_latency, samples_allocated, info)
 
         return updates
 

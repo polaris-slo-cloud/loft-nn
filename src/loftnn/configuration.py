@@ -1,18 +1,31 @@
 from dataclasses import dataclass
 from typing import Callable
 
+import logging
 import os
 
 from torch import Tensor
 
+logger = logging.getLogger(__name__)
+
 
 def is_available():
+    rank = os.environ.get("RANK", -1)
+    local_rank = os.environ.get("LOCAL_RANK", -1)
+    world_size = os.environ.get("WORLD_SIZE", -1)
+    master_addr = os.environ.get("MASTER_ADDR", "-1")
+    master_port = os.environ.get("MASTER_PORT", -1)
+
+    logger.info(
+        f"Got RANK={rank}, LOCAL_RANK={local_rank}, WORLD_SIZE={world_size}, MASTER_ADDR={master_addr}, MASTER_PORT={master_port}"
+    )
+
     return (
-        int(os.environ.get("RANK", -1)) != -1
-        and int(os.environ.get("LOCAL_RANK", -1)) != -1
-        and int(os.environ.get("WORLD_SIZE", -1)) != -1
-        and os.environ.get("MASTER_ADDR", "-1") != "-1"
-        and int(os.environ.get("MASTER_PORT", -1)) != -1
+        int(rank) != -1
+        and int(local_rank) != -1
+        and int(world_size) != -1
+        and master_addr != "-1"
+        and int(master_port) != -1
     )
 
 

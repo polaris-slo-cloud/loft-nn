@@ -25,13 +25,13 @@ class SampleAllocator:
     def compute_allocation_of_micro_batch(self, device_group, micro_batch_size):
         try:
             cache = self.cache_provider.get_cache(CacheType.sample_allocation_cache)
-            cache[(device_group, micro_batch_size)] = self._allocation_of_micro_batch(
+            cache[(device_group, micro_batch_size)] = self.allocation_of_micro_batch(
                 device_group, micro_batch_size
             )
         except ValueError:
             pass
 
-    def _allocation_of_micro_batch(self, device_group, micro_batch_size):
+    def allocation_of_micro_batch(self, device_group, micro_batch_size):
         samples_allocated = self._memory_aware_balancing(device_group, micro_batch_size)
         samples_allocated = self._straggler_workload_offloading(
             device_group, samples_allocated

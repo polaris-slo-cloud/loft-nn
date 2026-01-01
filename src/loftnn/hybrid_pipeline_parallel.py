@@ -1,21 +1,32 @@
+import gc
+import logging
+import textwrap
+
+from contextlib import nullcontext
+
 import torch
 import torch.distributed as dist
 import torch.nn as nn
 
 from torch.distributed import init_process_group, destroy_process_group
 from torch.distributed.pipelining import pipeline, SplitPoint
+from torch.distributed.pipelining._IR import _modify_graph_op_device
 
 from torch.nn.parallel import DistributedDataParallel as DDP
+
+from torch.profiler import profile, ProfilerActivity
 
 from loftnn import HybridPipelineConfiguration, ProcessConfiguration
 from loftnn.cache import CacheProvider
 from loftnn.collect import WorkerDataCollector
-from loftnn.exact_hybrid_pipeline_parallel_planner import Planner
+from loftnn.exact_planner import ExactPlanner
+from loftnn.exact_profiler import ExactProfiler
 from loftnn.model_utils import model_to_layers
 from loftnn.pipeline_schedule import ScheduleHybridPipelineParallel1F1B
-from loftnn.profile import Profiler
 from loftnn.sample_allocation import SampleAllocator
 from loftnn.types import Device, Worker, WorkerGroup
+
+logger = logging.getLogger(__name__)
 
 
 class HybridPipelineParallel(nn.Module):
@@ -35,11 +46,23 @@ class HybridPipelineParallel(nn.Module):
         self.pipeline_schedule_train = None
         self.pipeline_schedule_eval = None
 
+        logger.info(
+            textwrap.dedent(
+                f"""using:
+                    process_config={process_config},
+                    hybrid_pipeline_config={hybrid_pipeline_config},
+                    device={device}
+                """
+            )
+        )
+
         init_process_group(
             backend=process_config.backend,
             world_size=process_config.world_size,
             rank=process_config.rank,
         )
+
+        logger.info("initialized process group")
 
     def _create_worker_group(
         self, compute_capacities, available_memory, d2d_bandwidths
@@ -63,12 +86,12 @@ class HybridPipelineParallel(nn.Module):
     def _create_profiler_and_planner(self):
         cache_provider = CacheProvider()
         sample_allocator = SampleAllocator(cache_provider=cache_provider)
-        profiler = Profiler(
+        profiler = ExactProfiler(
             cache_provider=cache_provider,
             sample_allocator=sample_allocator,
             distributed=True,
         )
-        planner = Planner(profiler=profiler, sample_allocator=sample_allocator)
+        planner = ExactPlanner(profiler=profiler, sample_allocator=sample_allocator)
         return profiler, planner
 
     def compute_plan(self):
@@ -79,7 +102,12 @@ class HybridPipelineParallel(nn.Module):
         compute_capacities = collector.collect_compute_capacities(
             self.device, num_workers
         )
-        available_memory = collector.collect_available_memory(self.device, num_workers)
+        available_memory = collector.collect_available_memory(
+            self.model,
+            self.device,
+            self.hybrid_pipeline_config.microbatch_sample[0],
+            num_workers,
+        )
         d2d_bandwidths = collector.collect_d2d_bandwidths(num_workers)
 
         if self.process_config.rank == 0:
@@ -92,6 +120,8 @@ class HybridPipelineParallel(nn.Module):
             object_list = [None]
             dist.broadcast_object_list(object_list, src=0)
             worker_group = object_list[0]
+
+        logger.info(f"collected {worker_group}")
 
         profiler, planner = self._create_profiler_and_planner()
         split_points, device_groups, samples_allocated = None, None, None
@@ -111,6 +141,20 @@ class HybridPipelineParallel(nn.Module):
             object_list = [None, None, None]
             dist.broadcast_object_list(object_list, src=0)
             split_points, device_groups, samples_allocated = object_list
+
+        logger.info(
+            textwrap.dedent(
+                f"""determined plan:
+                    split_points={split_points},
+                    device_groups={device_groups},
+                    samples_allocated={samples_allocated}
+                """
+            )
+        )
+
+        if self.device == Device.cuda:
+            torch.cuda.empty_cache()
+        gc.collect()
 
         return split_points, device_groups, samples_allocated
 
@@ -154,24 +198,22 @@ class HybridPipelineParallel(nn.Module):
     ):
         world_rank = self.process_config.rank
 
-        if world_rank in pp_ranks:
-            pipeline_stage_train = pipe.build_stage(
-                pp_group.rank(), Device.cpu, pp_group
-            )
-            pipeline_stage_eval = pipe.build_stage(
-                pp_group.rank(), Device.cpu, pp_group
-            )
-        else:
-            device_group_start = self._device_group_start(device_group_mask)
-            pipeline_stage_train = pipe.build_stage(
-                device_group_start, Device.cpu, group=pp_group
-            )
-            pipeline_stage_eval = pipe.build_stage(
-                device_group_start, Device.cpu, group=pp_group
-            )
+        stage_device = Device.cpu  # all nodes must use cpu for building the stage
+        stage_index = (
+            pp_group.rank()
+            if world_rank in pp_ranks
+            else self._device_group_start(device_group_mask)
+        )
+
+        pipeline_stage_train = pipe.build_stage(stage_index, stage_device, pp_group)
+        pipeline_stage_eval = pipe.build_stage(stage_index, stage_device, pp_group)
 
         for pipeline_stage in [pipeline_stage_train, pipeline_stage_eval]:
+            stage_module = pipe.get_stage_module(stage_index)
+            _modify_graph_op_device(stage_module, self.device)
+            pipeline_stage.submod = pipeline_stage.submod.to(self.device)
             model = pipeline_stage.submod
+
             if world_rank in ddp_ranks and device_group_mask[world_rank] <= 1:
                 ddp_model = DDP(
                     model,
@@ -256,6 +298,17 @@ class HybridPipelineParallel(nn.Module):
             next_non_ddp_stage_world_rank=next_non_ddp_stage_world_rank,
         )
 
+        logger.info(
+            textwrap.dedent(
+                f"""built schedules:
+                    prev_stage_is_ddp={prev_stage_is_ddp},
+                    next_stage_is_ddp={next_stage_is_ddp},
+                    prev_non_ddp_stage_world_rank={prev_non_ddp_stage_world_rank},
+                    next_non_ddp_stage_world_rank={next_non_ddp_stage_world_rank}
+                """
+            )
+        )
+
         return pipeline_schedule_train, pipeline_schedule_eval
 
     def _device_group_start(self, device_group_mask):
@@ -288,26 +341,19 @@ class HybridPipelineParallel(nn.Module):
 
         microbatch_sample = self.hybrid_pipeline_config.microbatch_sample
 
-        stage_idx = (
-            pp_group.rank()
-            if world_rank in pp_ranks
-            else (
-                self._device_group_start(device_group_mask)
-                if world_rank in ddp_ranks
-                else -1
-            )
-        )
         microbatch_split = [
             samples_allocated[i][worker]
             for i in range(len(samples_allocated))
             for worker in samples_allocated[i].keys()
-            if i == stage_idx
+            if worker.rank in ddp_ranks
         ]
         microbatch_split_at = torch.cumsum(torch.tensor(microbatch_split), dim=0)
 
-        if sum(microbatch_split) != microbatch_sample.shape[0]:
+        microbatch_split_sum = sum(microbatch_split)
+        microbatch_sample_shape = microbatch_sample.shape[0]
+        if microbatch_split_sum != microbatch_sample_shape:
             raise ValueError(
-                f"Mismatch between samples allocated in stage {stage_idx} and microbatch sample shape"
+                f"Mismatch between samples allocated and microbatch sample shape: {microbatch_split_sum} != {microbatch_sample_shape}"
             )
 
         if world_rank in ddp_ranks:
@@ -344,21 +390,65 @@ class HybridPipelineParallel(nn.Module):
 
         self.training = True
 
+        logger.info(
+            textwrap.dedent(
+                f"""prepared schedule for hybrid pipeline parallelism:
+                    device_group_mask={device_group_mask},
+                    ddp_ranks={ddp_ranks},
+                    pp_ranks={pp_ranks},
+                    microbatch_split_at={microbatch_split_at},
+                    is_first_stage_ddp={self.is_first_stage_ddp},
+                    is_last_stage_ddp={self.is_last_stage_ddp}
+                """
+            )
+        )
+
     def forward(self, *inputs, **kwargs):
-        if self.pipeline_schedule_train is None or self.pipeline_schedule_eval is None:
-            raise RuntimeError("Schedule not prepared: Call prepare_schedule")
-
-        X = inputs[0]
-        Y = inputs[1]
-
-        logits = None
-        loss = None
-
         pipeline_schedule = (
             self.pipeline_schedule_train
             if self.training
             else self.pipeline_schedule_eval
         )
+
+        ctx = (
+            profile(
+                activities=(
+                    [ProfilerActivity.CPU, ProfilerActivity.CUDA]
+                    if torch.cuda.is_available()
+                    else [ProfilerActivity.CPU]
+                ),
+                record_shapes=True,
+                profile_memory=True,
+            )
+            if logger.isEnabledFor(logging.DEBUG)
+            else nullcontext()
+        )
+        with ctx as prof:
+            X = inputs[0]
+            Y = inputs[1]
+
+            logits, loss = self._step(pipeline_schedule, X, Y)
+
+        if prof:
+            logger.debug("completed torch profiling")
+            logger.debug(
+                prof.key_averages().table(
+                    sort_by="cpu_time_total",
+                    top_level_events_only=True,
+                    max_name_column_width=1000,
+                )
+            )
+
+        return logits, loss
+
+    def _step(self, pipeline_schedule, X, Y):
+        if self.pipeline_schedule_train is None or self.pipeline_schedule_eval is None:
+            raise RuntimeError("Schedule not prepared: Call prepare_schedule")
+
+        logger.debug(f"rank {dist.get_rank()}: running step with: X={X}, Y={Y}")
+
+        logits = None
+        loss = None
 
         if self.process_config.rank == 0 or self.is_first_stage_ddp:
             pipeline_schedule.step(X)

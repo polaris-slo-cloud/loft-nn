@@ -5,7 +5,7 @@ import torch
 from loftnn.types import Device
 
 
-def available_memory(device: Device) -> int:
+def free_memory(device: Device) -> int:
     return (
         psutil.virtual_memory().available
         if device == Device.cpu

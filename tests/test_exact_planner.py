@@ -1,36 +1,35 @@
-import time
-
 import pytest
 
 from loftnn.cache import CacheProvider
-from loftnn.exact_hybrid_pipeline_parallel_planner import Planner
-from loftnn.profile import Profiler
+from loftnn.exact_planner import ExactPlanner
+from loftnn.exact_profiler import ExactProfiler
 from loftnn.sample_allocation import SampleAllocator
 from loftnn.types import Worker, WorkerGroup
 
+from .base_test_planner import BaseTestPlanner
 from .sample_model import BalancedNN2, BalancedNN3, SimpleNN
 
 
-class TestExactHybridPipelineParallelPlanner:
+class TestExactPlanner(BaseTestPlanner):
 
     def setup_method(self):
         cache_provider = CacheProvider()
         sample_allocator = SampleAllocator(cache_provider=cache_provider)
-        self.profiler = Profiler(
+        self.profiler = ExactProfiler(
             cache_provider=cache_provider,
             sample_allocator=sample_allocator,
             distributed=False,
         )
-        self.planner = Planner(
+        self.planner = ExactPlanner(
             profiler=self.profiler, sample_allocator=sample_allocator
         )
 
     @pytest.mark.parametrize("parallel", [False, True])
     def test_plan(self, parallel):
         model = SimpleNN()
-        worker1 = Worker(rank=0, compute_capacity=1 / 2000, available_memory=4 * 40)
-        worker2 = Worker(rank=1, compute_capacity=1 / 1000, available_memory=4 * 20)
-        worker3 = Worker(rank=2, compute_capacity=1 / 1000, available_memory=4 * 20)
+        worker1 = Worker(rank=0, compute_capacity=1 / 2000, available_memory=40)
+        worker2 = Worker(rank=1, compute_capacity=1 / 1000, available_memory=20)
+        worker3 = Worker(rank=2, compute_capacity=1 / 1000, available_memory=20)
         worker_group = WorkerGroup(
             workers=[worker1, worker2, worker3],
             d2d_bandwidths={
@@ -67,8 +66,8 @@ class TestExactHybridPipelineParallelPlanner:
     def test_plan_low_bandwidth_favors_pipeline_parallelism(self):
         model = BalancedNN2()
 
-        worker1 = Worker(rank=0, compute_capacity=1 / 1000, available_memory=4 * 32)
-        worker2 = Worker(rank=1, compute_capacity=1 / 1000, available_memory=4 * 32)
+        worker1 = Worker(rank=0, compute_capacity=1 / 1000, available_memory=32)
+        worker2 = Worker(rank=1, compute_capacity=1 / 1000, available_memory=32)
         worker_group = WorkerGroup(
             workers=[worker1, worker2], d2d_bandwidths={(worker1, worker2): 1}
         )
@@ -90,8 +89,8 @@ class TestExactHybridPipelineParallelPlanner:
     def test_plan_high_bandwidth_favors_data_parallelism(self):
         model = BalancedNN2()
 
-        worker1 = Worker(rank=0, compute_capacity=1 / 1000, available_memory=4 * 10_000)
-        worker2 = Worker(rank=1, compute_capacity=1 / 1000, available_memory=4 * 10_000)
+        worker1 = Worker(rank=0, compute_capacity=1 / 1000, available_memory=10_000)
+        worker2 = Worker(rank=1, compute_capacity=1 / 1000, available_memory=10_000)
         worker_group = WorkerGroup(
             workers=[worker1, worker2], d2d_bandwidths={(worker1, worker2): 10**100}
         )
@@ -113,9 +112,9 @@ class TestExactHybridPipelineParallelPlanner:
     def test_plan_provides_multiple_split_points(self):
         model = BalancedNN3(features=10000)
 
-        worker1 = Worker(rank=0, compute_capacity=1 / 1000, available_memory=4 * 16)
-        worker2 = Worker(rank=1, compute_capacity=1 / 1000, available_memory=4 * 16)
-        worker3 = Worker(rank=2, compute_capacity=1 / 1000, available_memory=4 * 16)
+        worker1 = Worker(rank=0, compute_capacity=1 / 1000, available_memory=48)
+        worker2 = Worker(rank=1, compute_capacity=1 / 1000, available_memory=48)
+        worker3 = Worker(rank=2, compute_capacity=1 / 1000, available_memory=48)
         worker_group = WorkerGroup(
             workers=[worker1, worker2, worker3],
             d2d_bandwidths={
@@ -138,43 +137,3 @@ class TestExactHybridPipelineParallelPlanner:
         assert device_groups == [2, 1]
         assert len(samples_allocated) == 3
         assert samples_allocated == [{worker3: 48}, {worker2: 48}, {worker1: 48}]
-
-    @pytest.mark.skip(reason="run manually")
-    def test_plan_resnet(self):
-        from torchvision.models import resnet50
-
-        resnet_model = resnet50(weights=None)
-        num_workers = 6
-        workers = [
-            Worker(rank=i, compute_capacity=1 / 1000, available_memory=4 * 80)
-            for i in range(num_workers)
-        ]
-        d2d_bandwidths = {
-            (workers[i], workers[j]): 1
-            for i in range(num_workers)
-            for j in range(i + 1, num_workers)
-        }
-        worker_group = WorkerGroup(workers=workers, d2d_bandwidths=d2d_bandwidths)
-        micro_batch_size = 240
-        num_micro_batches = 4
-
-        print("Profiling...")
-        profile_start = time.time()
-        self.profiler.profile(
-            resnet_model, worker_group, micro_batch_size, repetitions=1
-        )
-        profile_end = time.time()
-        print(f"Profiling took {profile_end - profile_start} seconds")
-
-        print("Planning...")
-        plan_start = time.time()
-        split_points, device_groups, samples_allocated = self.planner.plan(
-            resnet_model, worker_group, micro_batch_size, num_micro_batches
-        )
-        plan_end = time.time()
-        print(f"Planning took {plan_end - plan_start} seconds")
-
-        print()
-        print(f"Split points: {split_points}")
-        print(f"Device groups: {device_groups}")
-        print(f"Samples allocated: {samples_allocated}")
