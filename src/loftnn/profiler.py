@@ -2,6 +2,7 @@ from typing import Protocol
 
 import torch.nn as nn
 
+from loftnn.model_utils import LayerInputProvider
 from loftnn.types import Device, WorkerGroup
 
 DEFAULT_DEVICE = Device.cpu
@@ -12,6 +13,7 @@ class Profiler(Protocol):
     def profile(
         self,
         model: nn.Module,
+        input: LayerInputProvider,
         worker_group: WorkerGroup,
         micro_batch_size: int,
         device: Device = DEFAULT_DEVICE,
@@ -23,6 +25,7 @@ class NoopProfiler(Profiler):
     def profile(
         self,
         model: nn.Module,
+        input: LayerInputProvider,
         worker_group: WorkerGroup,
         micro_batch_size: int,
         device: Device = DEFAULT_DEVICE,

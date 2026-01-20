@@ -4,10 +4,11 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 
 from loftnn import ProcessConfiguration
+from loftnn.parallel import Parallel
 from loftnn.types import Device
 
 
-class DataParallel(nn.Module):
+class DataParallel(Parallel):
     def __init__(
         self, model: nn.Module, process_config: ProcessConfiguration, device: Device
     ):
@@ -20,6 +21,7 @@ class DataParallel(nn.Module):
             backend=process_config.backend,
             world_size=process_config.world_size,
             rank=process_config.rank,
+            timeout=process_config.timeout,
         )
 
         if device == Device.cuda:
@@ -27,7 +29,7 @@ class DataParallel(nn.Module):
         elif device == Device.cpu:
             self.ddp_model = DDP(model, device_ids=None)
 
-    def forward(self, *inputs, **kwargs):
+    def forward_parallel(self, *inputs, **kwargs):
         return self.ddp_model(*inputs, **kwargs)
 
     def train(self, mode=True):

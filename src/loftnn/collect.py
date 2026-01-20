@@ -7,34 +7,39 @@ import torch.nn as nn
 from torch import Tensor
 
 from loftnn.batch import max_batch_size
-from loftnn.model_utils import repeat_forward_execution
+from loftnn.model_utils import LayerInputProvider
 from loftnn.types import Device
+from loftnn.worker_utils import compute_capacity
 
 
 class WorkerDataCollector:
-    def collect_compute_capacities(
-        self, device: Device, num_workers: int
-    ) -> dict[int, int]:
-        layer = nn.Linear(10_000, 10_000).to(device)
-        execution_time = repeat_forward_execution(
-            layer, device, batch_size=10, repetitions=3
-        )
-        compute_capacity = 1 / execution_time
-        return self._collect_from_workers(compute_capacity, device, num_workers)
+    def __init__(
+        self, layer_input: LayerInputProvider, device: Device, num_workers: int
+    ):
+        self.layer_input = layer_input
+        self.device = device
+        self.num_workers = num_workers
+
+    def collect_compute_capacities(self) -> dict[int, int]:
+        return self._collect_from_workers(compute_capacity(self.device))
 
     def collect_available_memory(
-        self, model: nn.Module, device: Device, input_sample: Tensor, num_workers: int
+        self,
+        model: nn.Module,
+        input_sample: Tensor,
     ) -> dict[int, int]:
-        batch_size_limit = max_batch_size(model, device, input_sample)
-        return self._collect_from_workers(batch_size_limit, device, num_workers)
+        batch_size_limit = max_batch_size(
+            model, self.layer_input, self.device, input_sample
+        )
+        return self._collect_from_workers(batch_size_limit)
 
-    def collect_d2d_bandwidths(self, num_workers: int) -> dict[tuple[int, int], int]:
+    def collect_d2d_bandwidths(self) -> dict[tuple[int, int], int]:
         size = 10_000_000  # 10 MB
         rank = dist.get_rank()
 
-        bandwidths_to = torch.zeros(num_workers)
-        for src in range(num_workers):
-            for dst in range(num_workers):
+        bandwidths_to = torch.zeros(self.num_workers)
+        for src in range(self.num_workers):
+            for dst in range(self.num_workers):
                 if src == dst:
                     continue
 
@@ -58,7 +63,9 @@ class WorkerDataCollector:
                     bandwidths_to[dst] = bandwidth
 
         if rank == 0:
-            gather_list = [torch.zeros_like(bandwidths_to) for _ in range(num_workers)]
+            gather_list = [
+                torch.zeros_like(bandwidths_to) for _ in range(self.num_workers)
+            ]
         else:
             gather_list = None
         dist.gather(bandwidths_to, gather_list, dst=0)
@@ -66,25 +73,23 @@ class WorkerDataCollector:
         d2d_bandwidths = None
         if rank == 0:
             d2d_bandwidths = {}
-            for i in range(num_workers):
-                for j in range(i + 1, num_workers):
+            for i in range(self.num_workers):
+                for j in range(i + 1, self.num_workers):
                     d2d_bandwidths[(i, j)] = int(
                         (gather_list[i][j].item() + gather_list[j][i].item()) / 2
                     )
         return d2d_bandwidths
 
-    def _collect_from_workers(
-        self, data, device: Device, num_workers: int
-    ) -> dict[int, int]:
+    def _collect_from_workers(self, data) -> dict[int, int]:
         rank = dist.get_rank()
-        tensor = torch.tensor(data, device=device)
+        tensor = torch.tensor(data, device=self.device)
         if rank == 0:
-            gather_list = [torch.zeros_like(tensor) for _ in range(num_workers)]
+            gather_list = [torch.zeros_like(tensor) for _ in range(self.num_workers)]
         else:
             gather_list = None
         dist.gather(tensor, gather_list, dst=0)
         return (
-            {i: int(gather_list[i].item()) for i in range(num_workers)}
+            {i: int(gather_list[i].item()) for i in range(self.num_workers)}
             if rank == 0
             else None
         )

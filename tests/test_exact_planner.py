@@ -3,14 +3,14 @@ import pytest
 from loftnn.cache import CacheProvider
 from loftnn.exact_planner import ExactPlanner
 from loftnn.exact_profiler import ExactProfiler
+from loftnn.model_utils import LayerInputProvider
 from loftnn.sample_allocation import SampleAllocator
 from loftnn.types import Worker, WorkerGroup
 
-from .base_test_planner import BaseTestPlanner
-from .sample_model import BalancedNN2, BalancedNN3, SimpleNN
+from .sample_model import BalancedNN2, BalancedNN3, SimpleNN, get_sample_input
 
 
-class TestExactPlanner(BaseTestPlanner):
+class TestExactPlanner:
 
     def setup_method(self):
         cache_provider = CacheProvider()
@@ -27,9 +27,23 @@ class TestExactPlanner(BaseTestPlanner):
     @pytest.mark.parametrize("parallel", [False, True])
     def test_plan(self, parallel):
         model = SimpleNN()
-        worker1 = Worker(rank=0, compute_capacity=1 / 2000, available_memory=40)
-        worker2 = Worker(rank=1, compute_capacity=1 / 1000, available_memory=20)
-        worker3 = Worker(rank=2, compute_capacity=1 / 1000, available_memory=20)
+
+        micro_batch_size = 40
+        num_micro_batches = 4
+        input = LayerInputProvider()
+        input.prepare(
+            model, input_shape=get_sample_input(model, micro_batch_size).shape
+        )
+
+        worker1 = Worker(
+            rank=0, compute_capacity=1 / 2000, available_memory=num_micro_batches * 40
+        )
+        worker2 = Worker(
+            rank=1, compute_capacity=1 / 1000, available_memory=num_micro_batches * 20
+        )
+        worker3 = Worker(
+            rank=2, compute_capacity=1 / 1000, available_memory=num_micro_batches * 20
+        )
         worker_group = WorkerGroup(
             workers=[worker1, worker2, worker3],
             d2d_bandwidths={
@@ -38,10 +52,8 @@ class TestExactPlanner(BaseTestPlanner):
                 (worker1, worker3): 1,
             },
         )
-        micro_batch_size = 40
-        num_micro_batches = 4
 
-        self.profiler.profile(model, worker_group, micro_batch_size)
+        self.profiler.profile(model, input, worker_group, micro_batch_size)
         split_points, device_groups, samples_allocated = self.planner.plan(
             model, worker_group, micro_batch_size, num_micro_batches, parallel
         )
@@ -66,15 +78,24 @@ class TestExactPlanner(BaseTestPlanner):
     def test_plan_low_bandwidth_favors_pipeline_parallelism(self):
         model = BalancedNN2()
 
-        worker1 = Worker(rank=0, compute_capacity=1 / 1000, available_memory=32)
-        worker2 = Worker(rank=1, compute_capacity=1 / 1000, available_memory=32)
+        micro_batch_size = 32
+        num_micro_batches = 4
+        input = LayerInputProvider()
+        input.prepare(
+            model, input_shape=get_sample_input(model, micro_batch_size).shape
+        )
+
+        worker1 = Worker(
+            rank=0, compute_capacity=1 / 1000, available_memory=num_micro_batches * 32
+        )
+        worker2 = Worker(
+            rank=1, compute_capacity=1 / 1000, available_memory=num_micro_batches * 32
+        )
         worker_group = WorkerGroup(
             workers=[worker1, worker2], d2d_bandwidths={(worker1, worker2): 1}
         )
-        micro_batch_size = 32
-        num_micro_batches = 4
 
-        self.profiler.profile(model, worker_group, micro_batch_size)
+        self.profiler.profile(model, input, worker_group, micro_batch_size)
         split_points, device_groups, samples_allocated = self.planner.plan(
             model, worker_group, micro_batch_size, num_micro_batches
         )
@@ -89,15 +110,28 @@ class TestExactPlanner(BaseTestPlanner):
     def test_plan_high_bandwidth_favors_data_parallelism(self):
         model = BalancedNN2()
 
-        worker1 = Worker(rank=0, compute_capacity=1 / 1000, available_memory=10_000)
-        worker2 = Worker(rank=1, compute_capacity=1 / 1000, available_memory=10_000)
+        micro_batch_size = 20_000
+        num_micro_batches = 4
+        input = LayerInputProvider()
+        input.prepare(
+            model, input_shape=get_sample_input(model, micro_batch_size).shape
+        )
+
+        worker1 = Worker(
+            rank=0,
+            compute_capacity=1 / 1000,
+            available_memory=num_micro_batches * 10_000,
+        )
+        worker2 = Worker(
+            rank=1,
+            compute_capacity=1 / 1000,
+            available_memory=num_micro_batches * 10_000,
+        )
         worker_group = WorkerGroup(
             workers=[worker1, worker2], d2d_bandwidths={(worker1, worker2): 10**100}
         )
-        micro_batch_size = 20_000
-        num_micro_batches = 4
 
-        self.profiler.profile(model, worker_group, micro_batch_size)
+        self.profiler.profile(model, input, worker_group, micro_batch_size)
         split_points, device_groups, samples_allocated = self.planner.plan(
             model, worker_group, micro_batch_size, num_micro_batches
         )
@@ -112,9 +146,22 @@ class TestExactPlanner(BaseTestPlanner):
     def test_plan_provides_multiple_split_points(self):
         model = BalancedNN3(features=10000)
 
-        worker1 = Worker(rank=0, compute_capacity=1 / 1000, available_memory=48)
-        worker2 = Worker(rank=1, compute_capacity=1 / 1000, available_memory=48)
-        worker3 = Worker(rank=2, compute_capacity=1 / 1000, available_memory=48)
+        micro_batch_size = 48
+        num_micro_batches = 4
+        input = LayerInputProvider()
+        input.prepare(
+            model, input_shape=get_sample_input(model, micro_batch_size).shape
+        )
+
+        worker1 = Worker(
+            rank=0, compute_capacity=1 / 1000, available_memory=num_micro_batches * 48
+        )
+        worker2 = Worker(
+            rank=1, compute_capacity=1 / 1000, available_memory=num_micro_batches * 48
+        )
+        worker3 = Worker(
+            rank=2, compute_capacity=1 / 1000, available_memory=num_micro_batches * 48
+        )
         worker_group = WorkerGroup(
             workers=[worker1, worker2, worker3],
             d2d_bandwidths={
@@ -123,10 +170,10 @@ class TestExactPlanner(BaseTestPlanner):
                 (worker1, worker3): 1,
             },
         )
-        micro_batch_size = 48
-        num_micro_batches = 4
 
-        self.profiler.profile(model, worker_group, micro_batch_size, repetitions=3)
+        self.profiler.profile(
+            model, input, worker_group, micro_batch_size, repetitions=3
+        )
         split_points, device_groups, samples_allocated = self.planner.plan(
             model, worker_group, micro_batch_size, num_micro_batches
         )

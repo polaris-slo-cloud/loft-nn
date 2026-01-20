@@ -21,14 +21,24 @@ def simple_worker_group(
     return worker_group
 
 
-def edge_cloud_worker_group():
+def edge_cloud_worker_group(num_micro_batches):
     # edge
-    worker1 = Worker(rank=0, compute_capacity=1 / 5000, available_memory=20)
-    worker2 = Worker(rank=1, compute_capacity=1 / 5000, available_memory=20)
-    worker3 = Worker(rank=2, compute_capacity=1 / 5000, available_memory=20)
+    worker1 = Worker(
+        rank=0, compute_capacity=1 / 5000, available_memory=num_micro_batches * 20
+    )
+    worker2 = Worker(
+        rank=1, compute_capacity=1 / 5000, available_memory=num_micro_batches * 20
+    )
+    worker3 = Worker(
+        rank=2, compute_capacity=1 / 5000, available_memory=num_micro_batches * 20
+    )
     # cloud
-    worker4 = Worker(rank=3, compute_capacity=1 / 1000, available_memory=60)
-    worker5 = Worker(rank=4, compute_capacity=1 / 1000, available_memory=60)
+    worker4 = Worker(
+        rank=3, compute_capacity=1 / 1000, available_memory=num_micro_batches * 60
+    )
+    worker5 = Worker(
+        rank=4, compute_capacity=1 / 1000, available_memory=num_micro_batches * 60
+    )
 
     workers = [worker1, worker2, worker3, worker4, worker5]
     d2d_bandwidths = {

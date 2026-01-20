@@ -4,7 +4,11 @@
 #   In Proceedings of the 30th Annual International Conference on Mobile Computing and Networking, ACM MobiCom ’24,
 #   page 312–326, New York, NY, USA, 2024. Association for Computing Machinery.
 
+import logging
+
 from loftnn.cache import CacheProvider, CacheType
+
+logger = logging.getLogger(__name__)
 
 
 class SampleAllocator:
@@ -32,10 +36,15 @@ class SampleAllocator:
             pass
 
     def allocation_of_micro_batch(self, device_group, micro_batch_size):
+        logger.debug(
+            f"determining allocation of micro-batch for device_group={device_group}, micro_batch_size={micro_batch_size}"
+        )
+
         samples_allocated = self._memory_aware_balancing(device_group, micro_batch_size)
         samples_allocated = self._straggler_workload_offloading(
             device_group, samples_allocated
         )
+
         return samples_allocated
 
     def _memory_aware_balancing(self, device_group, beta):
@@ -68,6 +77,21 @@ class SampleAllocator:
             )
             samples_allocated[d] = samples_allocated[d] + delta[d]
             available_memory[d] = available_memory[d] - samples_allocated[d]
+
+        if all(v == 0 for v in delta.values()) and beta > 0:
+            available_devices = [d for d in device_group if available_memory[d] > 0]
+            fastest_devices_available = sorted(
+                available_devices, key=lambda d: d.compute_capacity, reverse=True
+            )
+
+            remainders = []
+            while sum(remainders) != beta:
+                remainders.append(1)
+            for idx, remainder in enumerate(remainders):
+                d = fastest_devices_available[idx]
+                samples_allocated[d] += remainder
+
+            return samples_allocated
 
         device_group_remaining = [d for d in device_group if available_memory[d] > 0]
         beta_remaining = beta - sum([delta[d] for d in device_group])

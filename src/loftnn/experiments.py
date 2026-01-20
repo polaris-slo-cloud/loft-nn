@@ -5,6 +5,8 @@ import json
 import pprint
 import time
 
+from loftnn.types import Device
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,14 +34,15 @@ class Experiment(ABC):
 class ExperimentRunner:
 
     @staticmethod
-    def run_all():
+    def run_all(device: Device):
         logger.info("Running experiments...")
         experiments = Experiment.__subclasses__()
         experimental_results = {
-            experiment.__name__: list(experiment().run()) for experiment in experiments
+            experiment.__name__: list(experiment().run(device))
+            for experiment in experiments
         }
 
-        logger.info(f"\nExperimental results:")
+        logger.info("\nExperimental results:")
         logger.info(pprint.pformat(experimental_results))
 
         with open("experimental_results.json", "w") as f:

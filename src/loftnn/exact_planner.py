@@ -45,6 +45,10 @@ class ExactPlanner(Planner):
     ):
         layers = model_to_layers(model)
 
+        logger.info(
+            f"planning {len(layers)} layers on {len(worker_group)} workers with micro_batch_size={micro_batch_size} and num_micro_batches={num_micro_batches}"
+        )
+
         Q, num_stages = self._plan_hpp(
             layers, worker_group, micro_batch_size, num_micro_batches, parallel
         )
@@ -151,6 +155,7 @@ class ExactPlanner(Planner):
             [
                 (p, Q[(len(layers), len(devices), p)])
                 for p in range(1, min(len(layers), len(devices)) + 1)
+                if Q[(len(layers), len(devices), p)][-1][0] < INFEASIBLE_LATENCY
             ],
             key=lambda x: x[1][-1][0],
         )[0]
@@ -275,6 +280,8 @@ class ExactPlanner(Planner):
             dm_u,
         )  # updates to the state are collected here
 
+        logger.debug(f"planning {(l, n, lp, np, p)}")
+
         if p == min(len(layers), len(devices)):
             # only take minimum of previous stage
             return updates
@@ -290,6 +297,7 @@ class ExactPlanner(Planner):
         ):
             ef_u[(l, n, lp, np, p)] = 0
             eb_u[(l, n, lp, np, p)] = 0
+            dm_u[(l, n, lp, np, p)] = (0, 0, 0)
             Qt_u[(l, n, lp, np, p)] = (INFEASIBLE_LATENCY, {}, {})
             return updates
 
@@ -300,8 +308,13 @@ class ExactPlanner(Planner):
                 device_group, micro_batch_size
             )
         except ValueError:
+            logger.debug(
+                f"unable to obtain allocation for {(l, n, lp, np, p)}: device_group={device_group}, micro_batch_size={micro_batch_size}"
+            )
+
             ef_u[(l, n, lp, np, p)] = 0
             eb_u[(l, n, lp, np, p)] = 0
+            dm_u[(l, n, lp, np, p)] = (0, 0, 0)
             Qt_u[(l, n, lp, np, p)] = (INFEASIBLE_LATENCY, {}, {})
             return updates
 
@@ -424,6 +437,11 @@ class ExactPlanner(Planner):
             is_max_latency = False
             hpp_round_latency = prev_hpp_round_latency
 
+        try:
+            self._backtrack(lp, np, p, Q, check_validity=True)
+        except RuntimeError:
+            hpp_round_latency = INFEASIBLE_LATENCY
+
         info = (
             {"tsw": tsw, "tsa": tsa, "tse": tse, "is_max_latency": is_max_latency}
             if logger.isEnabledFor(logging.INFO)
@@ -456,8 +474,12 @@ class ExactPlanner(Planner):
             else 0
         )
 
-    def _backtrack(self, lp, np, p, Q):
+    def _backtrack(self, lp, np, p, Q, check_validity=False):
         for s in reversed(range(1, p)):
+            if lp == 0 or np == 0:
+                if check_validity:
+                    raise RuntimeError("Invalid state during backtracking")
+                break
             l, n, lp, np, pp, _ = Q[lp, np, s]
             yield (l, n, lp, np, pp)
 

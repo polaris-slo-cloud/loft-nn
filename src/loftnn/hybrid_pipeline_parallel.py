@@ -3,6 +3,7 @@ import logging
 import textwrap
 
 from contextlib import nullcontext
+from datetime import timedelta
 
 import torch
 import torch.distributed as dist
@@ -19,17 +20,22 @@ from torch.profiler import profile, ProfilerActivity
 from loftnn import HybridPipelineConfiguration, ProcessConfiguration
 from loftnn.cache import CacheProvider
 from loftnn.collect import WorkerDataCollector
+from loftnn.configuration import HybridPipelinePlanningAlgorithm
+from loftnn.edge_cloud_planner import EdgeCloudPlanner
 from loftnn.exact_planner import ExactPlanner
 from loftnn.exact_profiler import ExactProfiler
-from loftnn.model_utils import model_to_layers
+from loftnn.logging import log_execution_time
+from loftnn.model_utils import LayerInputProvider, model_to_layers
+from loftnn.parallel import Parallel
 from loftnn.pipeline_schedule import ScheduleHybridPipelineParallel1F1B
+from loftnn.profiler import NoopProfiler
 from loftnn.sample_allocation import SampleAllocator
 from loftnn.types import Device, Worker, WorkerGroup
 
 logger = logging.getLogger(__name__)
 
 
-class HybridPipelineParallel(nn.Module):
+class HybridPipelineParallel(Parallel):
     def __init__(
         self,
         model: nn.Module,
@@ -60,9 +66,22 @@ class HybridPipelineParallel(nn.Module):
             backend=process_config.backend,
             world_size=process_config.world_size,
             rank=process_config.rank,
+            timeout=process_config.timeout,
         )
 
+        slow_ops_group = dist.new_group(
+            ranks=list(range(process_config.world_size)), timeout=timedelta(minutes=5)
+        )
+        self.slow_ops_group = slow_ops_group
+
         logger.info("initialized process group")
+
+        self.layer_input = LayerInputProvider()
+        self.layer_input.prepare(
+            self.model,
+            input_shape=self.hybrid_pipeline_config.microbatch_sample.shape,
+            dtype=self.hybrid_pipeline_config.microbatch_sample.dtype,
+        )
 
     def _create_worker_group(
         self, compute_capacities, available_memory, d2d_bandwidths
@@ -86,29 +105,43 @@ class HybridPipelineParallel(nn.Module):
     def _create_profiler_and_planner(self):
         cache_provider = CacheProvider()
         sample_allocator = SampleAllocator(cache_provider=cache_provider)
-        profiler = ExactProfiler(
-            cache_provider=cache_provider,
-            sample_allocator=sample_allocator,
-            distributed=True,
-        )
-        planner = ExactPlanner(profiler=profiler, sample_allocator=sample_allocator)
+
+        profiler, planner = None, None
+        if self.hybrid_pipeline_config.planner == HybridPipelinePlanningAlgorithm.exact:
+            profiler = ExactProfiler(
+                cache_provider=cache_provider,
+                sample_allocator=sample_allocator,
+                distributed=True,
+            )
+            planner = ExactPlanner(profiler=profiler, sample_allocator=sample_allocator)
+        elif (
+            self.hybrid_pipeline_config.planner
+            == HybridPipelinePlanningAlgorithm.edge_cloud
+        ):
+            profiler = NoopProfiler()
+            planner = EdgeCloudPlanner(
+                layer_input=self.layer_input,
+                sample_allocator=sample_allocator,
+                device=self.device,
+            )
+
         return profiler, planner
 
     def compute_plan(self):
-        collector = WorkerDataCollector()
         num_workers = self.process_config.world_size
+        collector = WorkerDataCollector(
+            layer_input=self.layer_input,
+            device=self.device,
+            num_workers=num_workers,
+        )
         micro_batch_size = self.hybrid_pipeline_config.microbatch_sample.shape[0]
 
-        compute_capacities = collector.collect_compute_capacities(
-            self.device, num_workers
-        )
+        compute_capacities = collector.collect_compute_capacities()
         available_memory = collector.collect_available_memory(
             self.model,
-            self.device,
             self.hybrid_pipeline_config.microbatch_sample[0],
-            num_workers,
         )
-        d2d_bandwidths = collector.collect_d2d_bandwidths(num_workers)
+        d2d_bandwidths = collector.collect_d2d_bandwidths()
 
         if self.process_config.rank == 0:
             worker_group = self._create_worker_group(
@@ -126,14 +159,22 @@ class HybridPipelineParallel(nn.Module):
         profiler, planner = self._create_profiler_and_planner()
         split_points, device_groups, samples_allocated = None, None, None
 
-        profiler.profile(self.model, worker_group, micro_batch_size, device=self.device)
+        with log_execution_time("profiling", logger.info):
+            profiler.profile(
+                self.model,
+                self.layer_input,
+                worker_group,
+                micro_batch_size,
+                device=self.device,
+            )
 
         if self.process_config.rank == 0:
             num_microbatches = self.hybrid_pipeline_config.num_microbatches
 
-            split_points, device_groups, samples_allocated = planner.plan(
-                self.model, worker_group, micro_batch_size, num_microbatches
-            )
+            with log_execution_time("planning", logger.info):
+                split_points, device_groups, samples_allocated = planner.plan(
+                    self.model, worker_group, micro_batch_size, num_microbatches
+                )
 
             object_list = [split_points, device_groups, samples_allocated]
             dist.broadcast_object_list(object_list, src=0)
@@ -208,10 +249,11 @@ class HybridPipelineParallel(nn.Module):
         pipeline_stage_train = pipe.build_stage(stage_index, stage_device, pp_group)
         pipeline_stage_eval = pipe.build_stage(stage_index, stage_device, pp_group)
 
+        torch._inductor.config.compile_threads = 1
         for pipeline_stage in [pipeline_stage_train, pipeline_stage_eval]:
             stage_module = pipe.get_stage_module(stage_index)
             _modify_graph_op_device(stage_module, self.device)
-            pipeline_stage.submod = pipeline_stage.submod.to(self.device)
+            pipeline_stage.submod = torch.compile(pipeline_stage.submod.to(self.device))
             model = pipeline_stage.submod
 
             if world_rank in ddp_ranks and device_group_mask[world_rank] <= 1:
@@ -227,6 +269,9 @@ class HybridPipelineParallel(nn.Module):
 
             # skip initialization
             pipeline_stage._get_init_p2p_neighbors_ops = lambda: []
+
+        logger.info("waiting for compilation to finish on all workers")
+        dist.barrier(group=self.slow_ops_group)
 
         return pipeline_stage_train, pipeline_stage_eval
 
@@ -298,7 +343,7 @@ class HybridPipelineParallel(nn.Module):
             next_non_ddp_stage_world_rank=next_non_ddp_stage_world_rank,
         )
 
-        logger.info(
+        logger.debug(
             textwrap.dedent(
                 f"""built schedules:
                     prev_stage_is_ddp={prev_stage_is_ddp},
@@ -390,7 +435,7 @@ class HybridPipelineParallel(nn.Module):
 
         self.training = True
 
-        logger.info(
+        logger.debug(
             textwrap.dedent(
                 f"""prepared schedule for hybrid pipeline parallelism:
                     device_group_mask={device_group_mask},
@@ -403,7 +448,10 @@ class HybridPipelineParallel(nn.Module):
             )
         )
 
-    def forward(self, *inputs, **kwargs):
+    def forward_parallel(self, *inputs, **kwargs):
+        if self.pipeline_schedule_train is None or self.pipeline_schedule_eval is None:
+            raise RuntimeError("Schedule not prepared: Call prepare_schedule")
+
         pipeline_schedule = (
             self.pipeline_schedule_train
             if self.training
@@ -442,9 +490,6 @@ class HybridPipelineParallel(nn.Module):
         return logits, loss
 
     def _step(self, pipeline_schedule, X, Y):
-        if self.pipeline_schedule_train is None or self.pipeline_schedule_eval is None:
-            raise RuntimeError("Schedule not prepared: Call prepare_schedule")
-
         logger.debug(f"rank {dist.get_rank()}: running step with: X={X}, Y={Y}")
 
         logits = None
@@ -461,7 +506,7 @@ class HybridPipelineParallel(nn.Module):
                 logits = pipeline_schedule.step(target=Y, losses=current_losses)
                 loss = sum(current_losses) / len(current_losses)
             else:
-                logits = self.pipeline_schedule_eval.step()
+                logits = pipeline_schedule.step()
                 if isinstance(self.model, DDP):
                     Y_mbs = list(
                         torch.tensor_split(

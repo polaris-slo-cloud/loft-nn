@@ -13,8 +13,8 @@ from loftnn.sample_allocation import SampleAllocator
 from loftnn.types import Device, Worker, WorkerGroup
 from loftnn.model_utils import (
     layer_id,
+    LayerInputProvider,
     model_to_layers,
-    random_layer_input,
     repeat_backward_execution,
     repeat_forward_execution,
 )
@@ -63,6 +63,7 @@ class ExactProfiler(Profiler):
     def profile(
         self,
         model: nn.Module,
+        input: LayerInputProvider,
         worker_group: WorkerGroup,
         micro_batch_size: int,
         device: Device = DEFAULT_DEVICE,
@@ -79,6 +80,7 @@ class ExactProfiler(Profiler):
                         self._profile_worker_subgroup(
                             worker_subgroup,
                             layers,
+                            input,
                             device,
                             l,
                             lp,
@@ -100,6 +102,7 @@ class ExactProfiler(Profiler):
                         )
                         self._estimate_transmission_time(
                             transmission_layer,
+                            input,
                             device,
                             mean_d2d_bandwidth,
                             forward_only=False,
@@ -107,6 +110,7 @@ class ExactProfiler(Profiler):
                         )
                         self._estimate_transmission_time(
                             transmission_layer,
+                            input,
                             device,
                             mean_d2d_bandwidth,
                             forward_only=True,
@@ -114,6 +118,7 @@ class ExactProfiler(Profiler):
                         )
                         self._estimate_transmission_time(
                             transmission_layer,
+                            input,
                             device,
                             mean_d2d_bandwidth,
                             forward_only=False,
@@ -155,6 +160,7 @@ class ExactProfiler(Profiler):
         self,
         worker_subgroup: WorkerGroup,
         layers: list[nn.Module],
+        input: LayerInputProvider,
         device: Device,
         l: int,
         lp: int,
@@ -178,6 +184,7 @@ class ExactProfiler(Profiler):
                 if worker.rank == rank or not self.distributed:
                     self._profile_forward_execution_time(
                         layers[la],
+                        input,
                         device,
                         worker,
                         samples_allocated[worker],
@@ -186,6 +193,7 @@ class ExactProfiler(Profiler):
 
                     self._profile_backward_execution_time(
                         layers[la],
+                        input,
                         device,
                         worker,
                         samples_allocated[worker],
@@ -195,6 +203,7 @@ class ExactProfiler(Profiler):
     def _profile_forward_execution_time(
         self,
         layer: nn.Module,
+        input: LayerInputProvider,
         device: Device,
         worker: Worker,
         sample_size: int,
@@ -207,7 +216,7 @@ class ExactProfiler(Profiler):
         layer.eval()
         layer.to(device)
         execution_time = repeat_forward_execution(
-            layer, device, sample_size, repetitions
+            layer, input, device, sample_size, repetitions
         )
         layer.train()
 
@@ -216,6 +225,7 @@ class ExactProfiler(Profiler):
     def _profile_backward_execution_time(
         self,
         layer: nn.Module,
+        input: LayerInputProvider,
         device: Device,
         worker: Worker,
         sample_size: int,
@@ -237,7 +247,7 @@ class ExactProfiler(Profiler):
         layer.eval()
         layer.to(device)
         execution_time = repeat_backward_execution(
-            layer, device, sample_size, repetitions
+            layer, input, device, sample_size, repetitions
         )
         layer.train()
 
@@ -246,6 +256,7 @@ class ExactProfiler(Profiler):
     def _estimate_transmission_time(
         self,
         layer: nn.Module,
+        input: LayerInputProvider,
         device: Device,
         d2d_bandwidth: int,
         forward_only,
@@ -270,12 +281,12 @@ class ExactProfiler(Profiler):
         layer.to(device)
         size_intermediate_tensors = (
             (
-                self._random_forward_output(layer, device, sample_size=1).shape
+                self._random_forward_output(layer, input, device).shape
                 if not backward_only
                 else torch.empty(0)
             ),
             (
-                self._random_backward_input(layer, device, sample_size=1).shape
+                self._random_backward_input(layer, input, device).shape
                 if not forward_only
                 else torch.empty(0)
             ),
@@ -286,9 +297,12 @@ class ExactProfiler(Profiler):
         ) / (d2d_bandwidth / 4)
 
     def _random_forward_output(
-        self, layer: nn.Module, device: Device, sample_size: int
+        self,
+        layer: nn.Module,
+        input: LayerInputProvider,
+        device: Device,
     ):
-        x = random_layer_input(layer, device, sample_size)
+        x = input.random(layer, device)
         layer.eval()
 
         with torch.no_grad():
@@ -299,9 +313,12 @@ class ExactProfiler(Profiler):
         return y
 
     def _random_backward_input(
-        self, layer: nn.Module, device: Device, sample_size: int
+        self,
+        layer: nn.Module,
+        input: LayerInputProvider,
+        device: Device,
     ):
-        x = random_layer_input(layer, device, sample_size)
+        x = input.random(layer, device)
         x.requires_grad = True
         layer.eval()
 

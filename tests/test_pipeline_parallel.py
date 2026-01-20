@@ -18,7 +18,7 @@ class TestPipelineParallel(TestParallel):
             model=model,
             process_config=process_config,
             pipeline_config=PipelineConfiguration(
-                split_points=["linear_relu_model.1", "linear_relu_model.3"],
+                split_points=[1, 3],
                 num_microbatches=num_microbatches,
                 microbatch_sample=inp.chunk(num_microbatches)[0],
                 loss_fn=None,

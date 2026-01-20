@@ -1,8 +1,10 @@
-from dataclasses import dataclass
-from typing import Callable
-
 import logging
 import os
+
+from enum import Enum
+from dataclasses import dataclass
+from datetime import timedelta
+from typing import Callable
 
 from torch import Tensor
 
@@ -15,10 +17,6 @@ def is_available():
     world_size = os.environ.get("WORLD_SIZE", -1)
     master_addr = os.environ.get("MASTER_ADDR", "-1")
     master_port = os.environ.get("MASTER_PORT", -1)
-
-    logger.info(
-        f"Got RANK={rank}, LOCAL_RANK={local_rank}, WORLD_SIZE={world_size}, MASTER_ADDR={master_addr}, MASTER_PORT={master_port}"
-    )
 
     return (
         int(rank) != -1
@@ -35,12 +33,20 @@ class ProcessConfiguration:
     local_rank: int
     world_size: int
     backend: str = "gloo"
+    timeout: timedelta = timedelta(seconds=60)
 
     @staticmethod
     def from_env():
         rank = int(os.environ["RANK"])
         local_rank = int(os.environ["LOCAL_RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
+
+        master_addr = os.environ["MASTER_ADDR"]
+        master_port = os.environ["MASTER_PORT"]
+        logger.info(
+            f"Got RANK={rank}, LOCAL_RANK={local_rank}, WORLD_SIZE={world_size}, MASTER_ADDR={master_addr}, MASTER_PORT={master_port}"
+        )
+
         return ProcessConfiguration(
             rank=rank, local_rank=local_rank, world_size=world_size
         )
@@ -48,14 +54,20 @@ class ProcessConfiguration:
 
 @dataclass(frozen=True)
 class PipelineConfiguration:
-    split_points: list[str]
+    split_points: list[int]
     num_microbatches: int
     microbatch_sample: Tensor
     loss_fn: Callable
 
 
+class HybridPipelinePlanningAlgorithm(str, Enum):
+    exact = "exact"
+    edge_cloud = "edge_cloud"
+
+
 @dataclass(frozen=True)
 class HybridPipelineConfiguration:
+    planner: HybridPipelinePlanningAlgorithm
     num_microbatches: int
     microbatch_sample: Tensor
     loss_fn: Callable

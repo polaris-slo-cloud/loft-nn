@@ -5,6 +5,10 @@ import torch.nn as nn
 def get_sample_input(model, batch_size):
     if isinstance(model, SimpleNN):
         return torch.randn(batch_size, 40, 40)
+    if isinstance(model, BalancedNN2):
+        return torch.randn(batch_size, model.linear_1.in_features)
+    if isinstance(model, BalancedNN3):
+        return torch.randn(batch_size, model.linear_1.in_features)
     else:
         raise ValueError("Unsupported model.")
 

@@ -10,10 +10,12 @@ from torch.distributed.pipelining import (
 )
 
 from loftnn import ProcessConfiguration, PipelineConfiguration
+from loftnn.model_utils import model_to_layers
+from loftnn.parallel import Parallel
 from loftnn.types import Device
 
 
-class PipelineParallel(nn.Module):
+class PipelineParallel(Parallel):
     def __init__(
         self,
         model: nn.Module,
@@ -28,11 +30,14 @@ class PipelineParallel(nn.Module):
             backend=process_config.backend,
             world_size=process_config.world_size,
             rank=process_config.rank,
+            timeout=process_config.timeout,
         )
 
+        layers = model_to_layers(model, include_names=True)
         split_spec = {
-            split_point: SplitPoint.BEGINNING
+            layers[split_point][0]: SplitPoint.BEGINNING
             for split_point in pipeline_config.split_points
+            if split_point > 0
         }
         pipe = pipeline(
             module=model,
@@ -71,7 +76,7 @@ class PipelineParallel(nn.Module):
 
         self.training = True
 
-    def forward(self, *inputs, **kwargs):
+    def forward_parallel(self, *inputs, **kwargs):
         X = inputs[0]
         Y = inputs[1]
 

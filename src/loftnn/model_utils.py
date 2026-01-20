@@ -1,3 +1,4 @@
+import logging
 import time
 
 import torch
@@ -5,9 +6,12 @@ import torch.nn as nn
 
 from torch import Tensor
 from torch.fx import symbolic_trace
-from torch.nn import AdaptiveAvgPool2d, BatchNorm2d, Embedding, MaxPool2d
+
+from torchinfo import summary
 
 from loftnn.types import Device
+
+logger = logging.getLogger(__name__)
 
 
 def layer_id(layer: nn.Module):
@@ -24,45 +28,61 @@ def model_to_layers(model: nn.Module, include_names=False):
     return layers if include_names else [layer for (_, layer) in layers]
 
 
-def random_layer_input(
-    layer: nn.Module, device: Device, batch_size: int, input_sample: Tensor = None
-):
-    if input_sample is None:
-        # Generate a random input tensor based on the layer's expected input shape
-        input_shape = (batch_size, 1000)
-        use_int = False
+class LayerInputProvider:
+    def __init__(self):
+        self.shapes_by_layer = {}
 
-        params = list(layer.parameters())
-        if len(params) >= 1:
-            # Try to infer from first parameter shape (excluding batch)
-            input_shape = (batch_size,) + params[0].shape[1:]
+    def prepare(self, model, input_shape, dtype=None):
+        model_statistics = summary(
+            model,
+            input_size=input_shape,
+            dtypes=[dtype] if dtype else None,
+            verbose=(1 if logger.isEnabledFor(logging.DEBUG) else 0),
+        )
+        self.shapes_by_layer = {
+            id(layer_info.module): layer_info
+            for layer_info in model_statistics.summary_list
+        }
 
-        if isinstance(layer, AdaptiveAvgPool2d):
-            input_shape = (batch_size, 1000, 1000)
-        elif isinstance(layer, BatchNorm2d):
-            input_shape = (batch_size, layer.num_features, 10, 10)
-        elif isinstance(layer, MaxPool2d):
-            input_shape = (batch_size, 1000, 1000)
-        elif isinstance(layer, Embedding):
-            use_int = True
-    else:
-        input_shape = (batch_size,) + input_sample.shape
-        use_int = not torch.is_floating_point(input_sample)
+    def random(
+        self,
+        layer: nn.Module,
+        device: Device,
+        batch_size: int = None,
+        input_sample: Tensor = None,
+    ):
+        if not self.shapes_by_layer:
+            raise RuntimeError("Layer input not prepared: Call prepare")
 
-    return (
-        torch.randint(0, 10, input_shape, device=device)
-        if use_int
-        else torch.randn(input_shape, device=device)
-    )
+        layer_info = self.shapes_by_layer[id(layer)]
+        input_shape = layer_info.input_size
+        use_int = isinstance(layer, nn.Embedding)
+
+        if batch_size:
+            input_shape = [batch_size] + input_shape[1:]
+
+        if input_sample is not None:
+            input_shape = (batch_size,) + input_sample.shape
+            use_int = not torch.is_floating_point(input_sample)
+
+        return (
+            torch.randint(0, 10, input_shape, device=device)
+            if use_int
+            else torch.randn(input_shape, device=device)
+        )
 
 
 def repeat_forward_execution(
-    layer: nn.Module, device: Device, batch_size: int, repetitions: int
+    layer: nn.Module,
+    input: LayerInputProvider,
+    device: Device,
+    batch_size: int,
+    repetitions: int,
 ) -> float:
     execution_times = []
 
     for _ in range(repetitions):
-        x = random_layer_input(layer, device, batch_size)
+        x = input.random(layer, device, batch_size)
 
         with torch.no_grad():
             start = time.time()
@@ -77,6 +97,7 @@ def repeat_forward_execution(
 
 def repeat_backward_execution(
     layer: nn.Module,
+    input: LayerInputProvider,
     device: Device,
     batch_size: int,
     repetitions: int,
@@ -85,7 +106,7 @@ def repeat_backward_execution(
     execution_times = []
 
     for _ in range(repetitions):
-        x = random_layer_input(layer, device, batch_size, input_sample)
+        x = input.random(layer, device, batch_size, input_sample)
         if torch.is_floating_point(x):
             x.requires_grad = True
 

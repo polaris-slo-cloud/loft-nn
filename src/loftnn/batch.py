@@ -8,7 +8,7 @@ import torch.nn as nn
 
 from torch import Tensor
 
-from loftnn.model_utils import random_layer_input, repeat_backward_execution
+from loftnn.model_utils import LayerInputProvider, repeat_backward_execution
 from loftnn.types import Device
 
 logger = logging.getLogger(__name__)
@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 def max_batch_size(
     model: nn.Module,
+    input: LayerInputProvider,
     device: Device,
     input_sample: Tensor = None,
 ) -> int:
@@ -32,6 +33,7 @@ def max_batch_size(
             try:
                 repeat_backward_execution(
                     model,
+                    input,
                     device,
                     batch_size=max_batch_size,
                     repetitions=3,
@@ -44,7 +46,7 @@ def max_batch_size(
     else:
         logger.info("estimating max_batch_size")
 
-        inputs = random_layer_input(model, device, batch_size=1).numel()
+        inputs = input.random(model, device).numel()
         trainable_parameters = sum(
             p.numel() for p in model.parameters() if p.requires_grad
         )
