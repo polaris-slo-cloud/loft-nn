@@ -7,6 +7,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from torchinfo import summary
+
 from loftnn.model_utils import LayerInputProvider, model_to_layers
 from loftnn.planner import Planner
 from loftnn.sample_allocation import SampleAllocator
@@ -48,6 +50,7 @@ class EdgeCloudPlanner(Planner):
         num_micro_batches: int,
         compute_capacity_threshhold: float = 0.25,
         bandwidth_threshhold: float = 0.1,
+        memory_estimation_factor: float = None,
     ):
         layers = model_to_layers(model)
 
@@ -310,6 +313,82 @@ class EdgeCloudPlanner(Planner):
             f"intermediate activations of split points (after), relative to mean: {[intermediate_activations[split_point - 1] / statistics.mean(intermediate_activations) for split_point in split_points]}"
         )
 
+        activation_checkpointing_budgets = []
+
+        if memory_estimation_factor is None:
+            # account for memory fragmentation, overheads,... and have a safety margin
+            memory_estimation_factor = (num_micro_batches / 2) * 1.1
+
+        split_points_complete = [0] + split_points + [len(layers)]
+        for idx, split_point in enumerate(split_points_complete):
+            if (idx - 1) >= 0:
+                prev_split_point = split_points_complete[idx - 1]
+
+                fwd_bwd_bytes = 0
+                total_bytes = 0
+                for i, layer in enumerate(layers[prev_split_point:split_point]):
+                    x = self.layer_input.random(layer, self.device)
+                    layer_statistics = summary(
+                        layer,
+                        input_size=x.shape,
+                        dtypes=[x.dtype],
+                        verbose=0,
+                    )
+
+                    fwd_bwd_bytes += int(
+                        layer_statistics.total_output_bytes * memory_estimation_factor
+                    )
+                    total_bytes += int(
+                        (layer_statistics.total_output_bytes * memory_estimation_factor)
+                        + layer_statistics.total_param_bytes
+                    )
+
+                    is_first_layer = i == 0
+                    if prev_split_point == 0 and is_first_layer:
+                        total_bytes += int(
+                            layer_statistics.total_input * memory_estimation_factor
+                        )
+
+                workers_have_device_memory = [
+                    (
+                        worker.device_memory is not None
+                        and self.device in worker.device_memory
+                    )
+                    for worker in worker_group
+                ]
+                if all(workers_have_device_memory):
+                    free_bytes = statistics.mean(
+                        [
+                            worker.device_memory[self.device]
+                            for worker in worker_group
+                            if worker.rank in device_group_ranks[idx - 1]
+                        ]
+                    )
+                else:
+                    free_bytes = -1
+
+                logger.info(
+                    f"stage {idx} - total bytes estimate: {total_bytes}, free bytes: {free_bytes}, difference: {free_bytes - total_bytes}"
+                )
+
+                if total_bytes > free_bytes and free_bytes > 0:
+                    # solve: min x s.t. (total_bytes - (x * fwd_bwd_bytes) <= free_bytes)
+                    #       (total_bytes - free_bytes) <= x * fwd_bwd_bytes
+                    #       ((total_bytes - free_bytes) / fwd_bwd_bytes) <= x
+                    #       ((total_bytes - free_bytes) / fwd_bwd_bytes) = x
+                    #
+                    # then obtain budget = 1 - x
+
+                    x = (total_bytes - free_bytes) / (fwd_bwd_bytes)
+
+                    activation_checkpointing_budgets.append(1 - x)
+                else:
+                    activation_checkpointing_budgets.append(1.0)
+
+        logger.info(
+            f"activation checkpointing budgets: {activation_checkpointing_budgets}"
+        )
+
         # Step 3: Determine sample allocation
 
         samples_allocated = [
@@ -319,4 +398,9 @@ class EdgeCloudPlanner(Planner):
             for worker_group in worker_groups
         ]
 
-        return split_points, device_groups, samples_allocated
+        return (
+            split_points,
+            device_groups,
+            samples_allocated,
+            activation_checkpointing_budgets,
+        )

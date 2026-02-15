@@ -36,7 +36,7 @@ class TestEdgeCloudPlanner:
 
         worker_group = edge_cloud_worker_group(num_micro_batches)
 
-        split_points, device_groups, samples_allocated = self.planner.plan(
+        split_points, device_groups, samples_allocated, _ = self.planner.plan(
             model, worker_group, micro_batch_size, num_micro_batches
         )
 
@@ -65,16 +65,16 @@ class TestEdgeCloudPlanner:
         )
 
         worker1 = Worker(
-            rank=0, compute_capacity=1 / 1000, available_memory=num_micro_batches * 32
+            rank=0, compute_capacity=1 / 1000, batch_size_limit=num_micro_batches * 32
         )
         worker2 = Worker(
-            rank=1, compute_capacity=1 / 1000, available_memory=num_micro_batches * 32
+            rank=1, compute_capacity=1 / 1000, batch_size_limit=num_micro_batches * 32
         )
         worker3 = Worker(
-            rank=2, compute_capacity=1 / 2000, available_memory=num_micro_batches * 32
+            rank=2, compute_capacity=1 / 2000, batch_size_limit=num_micro_batches * 32
         )
         worker4 = Worker(
-            rank=3, compute_capacity=1 / 3000, available_memory=num_micro_batches * 32
+            rank=3, compute_capacity=1 / 3000, batch_size_limit=num_micro_batches * 32
         )
         workers = [worker1, worker2, worker3, worker4]
         worker_group = WorkerGroup(
@@ -86,7 +86,7 @@ class TestEdgeCloudPlanner:
             },
         )
 
-        split_points, device_groups, samples_allocated = self.planner.plan(
+        split_points, device_groups, samples_allocated, _ = self.planner.plan(
             model, worker_group, micro_batch_size, num_micro_batches
         )
 
@@ -121,16 +121,16 @@ class TestEdgeCloudPlanner:
         self.layer_input.prepare(model, input_shape=torch.Size([micro_batch_size, 10]))
 
         worker1 = Worker(
-            rank=0, compute_capacity=1 / 1000, available_memory=micro_batch_size * 32
+            rank=0, compute_capacity=1 / 1000, batch_size_limit=micro_batch_size * 32
         )
         worker2 = Worker(
-            rank=1, compute_capacity=1 / 1000, available_memory=micro_batch_size * 32
+            rank=1, compute_capacity=1 / 1000, batch_size_limit=micro_batch_size * 32
         )
         worker3 = Worker(
-            rank=2, compute_capacity=1 / 2000, available_memory=micro_batch_size * 32
+            rank=2, compute_capacity=1 / 2000, batch_size_limit=micro_batch_size * 32
         )
         worker4 = Worker(
-            rank=3, compute_capacity=1 / 3000, available_memory=micro_batch_size * 32
+            rank=3, compute_capacity=1 / 3000, batch_size_limit=micro_batch_size * 32
         )
         workers = [worker1, worker2, worker3, worker4]
         worker_group = WorkerGroup(
@@ -142,7 +142,7 @@ class TestEdgeCloudPlanner:
             },
         )
 
-        split_points, device_groups, samples_allocated = self.planner.plan(
+        split_points, device_groups, samples_allocated, _ = self.planner.plan(
             model, worker_group, micro_batch_size, num_micro_batches
         )
 
@@ -156,3 +156,54 @@ class TestEdgeCloudPlanner:
             {worker3: 32},
             {worker4: 32},
         ]
+
+    def test_plan_activation_checkpointing_budgets(self):
+        model = nn.Sequential(
+            nn.Linear(100, 100),
+            nn.ReLU(),
+            nn.Linear(100, 100),
+            nn.ReLU(),
+            nn.Linear(100, 100),
+        )
+
+        micro_batch_size = 32
+        num_micro_batches = 4
+        self.layer_input.prepare(model, input_shape=torch.Size([micro_batch_size, 100]))
+
+        worker1 = Worker(
+            rank=0,
+            compute_capacity=1 / 500,
+            batch_size_limit=micro_batch_size * 32,
+            device_memory={Device.cpu: 200000},
+        )
+        worker2 = Worker(
+            rank=1,
+            compute_capacity=1 / 1000,
+            batch_size_limit=micro_batch_size * 32,
+            device_memory={Device.cpu: 75000},
+        )
+        worker3 = Worker(
+            rank=2,
+            compute_capacity=1 / 1500,
+            batch_size_limit=micro_batch_size * 32,
+            device_memory={Device.cpu: 50000},
+        )
+        workers = [worker1, worker2, worker3]
+        worker_group = WorkerGroup(
+            workers=workers,
+            d2d_bandwidths={
+                (worker1, worker2): 10**5,
+                (worker2, worker3): 1,
+                (worker1, worker3): 1,
+            },
+        )
+
+        _, _, _, activation_checkpointing_budgets = self.planner.plan(
+            model, worker_group, micro_batch_size, num_micro_batches
+        )
+
+        activation_checkpointing_budgets = [
+            round(budget, 2) for budget in activation_checkpointing_budgets
+        ]
+        assert len(activation_checkpointing_budgets) == 3
+        assert activation_checkpointing_budgets == [1, 0.61, 0.17]

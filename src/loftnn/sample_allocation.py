@@ -62,42 +62,40 @@ class SampleAllocator:
         batch_size = {}
         delta = {}
         compute_capacity = {d: d.compute_capacity for d in device_group}
-        available_memory = {d: d.available_memory for d in device_group}
+        available_memory = {d: d.batch_size_limit for d in device_group}
 
-        for idx, d in enumerate(device_group):
-            batch_size[d] = min(d.batch_size(), beta)
+        for d in device_group:
+            batch_size[d] = min(d.batch_size_limit, beta)
             compute_capacity_fraction = compute_capacity[d] / (
                 sum([compute_capacity[dev] for dev in device_group])
             )
-            if beta % 2 == 1 and compute_capacity_fraction == 0.5:
-                compute_capacity_fraction = 0.5001 if idx % 2 == 0 else 0.4999
             delta[d] = min(
-                round(compute_capacity_fraction * beta),
+                int(compute_capacity_fraction * beta),
                 batch_size[d],
             )
             samples_allocated[d] = samples_allocated[d] + delta[d]
             available_memory[d] = available_memory[d] - samples_allocated[d]
 
+        device_group_remaining = [d for d in device_group if available_memory[d] > 0]
+        beta_remaining = beta - sum([delta[d] for d in device_group])
+
         if all(v == 0 for v in delta.values()) and beta > 0:
-            available_devices = [d for d in device_group if available_memory[d] > 0]
-            fastest_devices_available = sorted(
-                available_devices, key=lambda d: d.compute_capacity, reverse=True
+            fastest_devices_remaining = sorted(
+                device_group_remaining, key=lambda d: d.compute_capacity, reverse=True
             )
 
             remainders = []
             while sum(remainders) != beta:
                 remainders.append(1)
             for idx, remainder in enumerate(remainders):
-                d = fastest_devices_available[idx]
+                d = fastest_devices_remaining[idx]
                 samples_allocated[d] += remainder
 
             return samples_allocated
-
-        device_group_remaining = [d for d in device_group if available_memory[d] > 0]
-        beta_remaining = beta - sum([delta[d] for d in device_group])
-        return self._memory_aware_balancing_recursive(
-            device_group_remaining, beta_remaining, samples_allocated
-        )
+        else:
+            return self._memory_aware_balancing_recursive(
+                device_group_remaining, beta_remaining, samples_allocated
+            )
 
     def _straggler_workload_offloading(
         self, device_group, samples_allocated, samples_to_transfer=4

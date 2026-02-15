@@ -24,7 +24,7 @@ def plot_parameters_by_layer(model):
     plt.show()
 
 
-def plot_training_times_by_epoch(times_by_label, xlabel="Epoch"):
+def plot_training_times_by_epoch(times_by_label, xlabel="Epoch", ylim=100):
     for label, times in times_by_label.items():
         epochs = range(1, len(times) + 1)
         plt.plot(epochs, times, label=label, linestyle="-", marker="o")
@@ -35,7 +35,7 @@ def plot_training_times_by_epoch(times_by_label, xlabel="Epoch"):
 
     max_epochs = max(len(times) for times in times_by_label.values())
     plt.xticks(range(1, max_epochs + 1))
-    plt.ylim(0, 100)
+    plt.ylim(0, ylim)
 
     plt.legend()
     plt.grid(True, linestyle="--", alpha=0.6)
@@ -47,12 +47,25 @@ def plot_training_times_by_epoch(times_by_label, xlabel="Epoch"):
     plt.show()
 
 
-def plot_profiling_and_planning_times(labels, profiling_times, planning_times):
+def plot_profiling_and_planning_times(
+    labels, profiling_times, planning_times, ylim=100
+):
     fig, ax = plt.subplots()
 
     ax.bar(labels, profiling_times, label="Profiling")
-    ax.bar(labels, planning_times, bottom=profiling_times, label="Planning")
 
+    planning_times_gte1 = [max(t, 1) for t in planning_times]
+    planning_bar = ax.bar(
+        labels, planning_times_gte1, bottom=profiling_times, label="Planning"
+    )
+
+    total_times_rounded = [
+        round(profiling_time + planning_time, 2)
+        for profiling_time, planning_time in zip(profiling_times, planning_times)
+    ]
+    ax.bar_label(planning_bar, labels=total_times_rounded, padding=3)
+
+    ax.set_ylim(0, ylim)
     ax.set_ylabel("Time (s)")
     ax.set_title("Profiling and planning overhead")
     ax.legend()
@@ -81,5 +94,20 @@ def plot_planning_time_scaling(labels, worker_counts, planning_times):
 
     plt.savefig("planning_time_scaling.png")
     print("saved planning_time_scaling.png")
+
+    plt.show()
+
+
+def plot_model_size_limits(labels, model_size_limits):
+    fig, ax = plt.subplots()
+
+    ax.bar(labels, model_size_limits, label="Model size limit")
+
+    ax.set_ylabel("Parameters")
+    ax.set_title("Model size limits")
+    ax.legend()
+
+    plt.savefig("model_size_limits.png")
+    print("saved model_size_limits.png")
 
     plt.show()

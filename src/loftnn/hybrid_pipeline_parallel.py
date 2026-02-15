@@ -84,13 +84,14 @@ class HybridPipelineParallel(Parallel):
         )
 
     def _create_worker_group(
-        self, compute_capacities, available_memory, d2d_bandwidths
+        self, compute_capacities, batch_size_limits, device_memory, d2d_bandwidths
     ):
         workers = [
             Worker(
                 rank=i,
                 compute_capacity=compute_capacities[i],
-                available_memory=available_memory[i],
+                batch_size_limit=batch_size_limits[i],
+                device_memory=device_memory[i],
             )
             for i in range(self.process_config.world_size)
         ]
@@ -112,6 +113,7 @@ class HybridPipelineParallel(Parallel):
                 cache_provider=cache_provider,
                 sample_allocator=sample_allocator,
                 distributed=True,
+                process_group=self.slow_ops_group,
             )
             planner = ExactPlanner(profiler=profiler, sample_allocator=sample_allocator)
         elif (
@@ -127,7 +129,7 @@ class HybridPipelineParallel(Parallel):
 
         return profiler, planner
 
-    def compute_plan(self):
+    def compute_plan(self, batch_size_limits=[]):
         num_workers = self.process_config.world_size
         collector = WorkerDataCollector(
             layer_input=self.layer_input,
@@ -136,16 +138,20 @@ class HybridPipelineParallel(Parallel):
         )
         micro_batch_size = self.hybrid_pipeline_config.microbatch_sample.shape[0]
 
-        compute_capacities = collector.collect_compute_capacities()
-        available_memory = collector.collect_available_memory(
-            self.model,
-            self.hybrid_pipeline_config.microbatch_sample[0],
+        device_memory = (  # collect this first, before putting load on the devices
+            collector.collect_device_memory()
         )
+        compute_capacities = collector.collect_compute_capacities()
         d2d_bandwidths = collector.collect_d2d_bandwidths()
+        if not batch_size_limits:
+            batch_size_limits = collector.collect_batch_size_limits(
+                self.model,
+                self.hybrid_pipeline_config.microbatch_sample[0],
+            )
 
         if self.process_config.rank == 0:
             worker_group = self._create_worker_group(
-                compute_capacities, available_memory, d2d_bandwidths
+                compute_capacities, batch_size_limits, device_memory, d2d_bandwidths
             )
             object_list = [worker_group]
             dist.broadcast_object_list(object_list, src=0)
@@ -172,23 +178,39 @@ class HybridPipelineParallel(Parallel):
             num_microbatches = self.hybrid_pipeline_config.num_microbatches
 
             with log_execution_time("planning", logger.info):
-                split_points, device_groups, samples_allocated = planner.plan(
+                (
+                    split_points,
+                    device_groups,
+                    samples_allocated,
+                    activation_checkpointing_budgets,
+                ) = planner.plan(
                     self.model, worker_group, micro_batch_size, num_microbatches
                 )
 
-            object_list = [split_points, device_groups, samples_allocated]
-            dist.broadcast_object_list(object_list, src=0)
+            object_list = [
+                split_points,
+                device_groups,
+                samples_allocated,
+                activation_checkpointing_budgets,
+            ]
+            dist.broadcast_object_list(object_list, src=0, group=self.slow_ops_group)
         else:
-            object_list = [None, None, None]
-            dist.broadcast_object_list(object_list, src=0)
-            split_points, device_groups, samples_allocated = object_list
+            object_list = [None, None, None, None]
+            dist.broadcast_object_list(object_list, src=0, group=self.slow_ops_group)
+            (
+                split_points,
+                device_groups,
+                samples_allocated,
+                activation_checkpointing_budgets,
+            ) = object_list
 
         logger.info(
             textwrap.dedent(
                 f"""determined plan:
                     split_points={split_points},
                     device_groups={device_groups},
-                    samples_allocated={samples_allocated}
+                    samples_allocated={samples_allocated},
+                    activation_checkpointing_budgets={activation_checkpointing_budgets}
                 """
             )
         )
@@ -197,7 +219,12 @@ class HybridPipelineParallel(Parallel):
             torch.cuda.empty_cache()
         gc.collect()
 
-        return split_points, device_groups, samples_allocated
+        return (
+            split_points,
+            device_groups,
+            samples_allocated,
+            activation_checkpointing_budgets,
+        )
 
     def _build_device_group_mask(self, device_groups):
         device_groups.append(self.process_config.world_size)
@@ -235,7 +262,14 @@ class HybridPipelineParallel(Parallel):
         return pipe
 
     def _build_stages(
-        self, pipe, pp_ranks, pp_group, ddp_ranks, ddp_group, device_group_mask
+        self,
+        pipe,
+        pp_ranks,
+        pp_group,
+        ddp_ranks,
+        ddp_group,
+        device_group_mask,
+        activation_checkpointing_budgets,
     ):
         world_rank = self.process_config.rank
 
@@ -249,6 +283,15 @@ class HybridPipelineParallel(Parallel):
         pipeline_stage_train = pipe.build_stage(stage_index, stage_device, pp_group)
         pipeline_stage_eval = pipe.build_stage(stage_index, stage_device, pp_group)
 
+        parameters = sum(p.numel() for p in pipeline_stage_train.submod.parameters())
+        logger.info(f"parameters of model being trained: {parameters}")
+
+        _ = torch._dynamo
+        torch._functorch.config.activation_memory_budget = (
+            activation_checkpointing_budgets[stage_index]
+            if stage_index < len(activation_checkpointing_budgets)
+            else 1.0
+        )
         torch._inductor.config.compile_threads = 1
         for pipeline_stage in [pipeline_stage_train, pipeline_stage_eval]:
             stage_module = pipe.get_stage_module(stage_index)
@@ -368,6 +411,7 @@ class HybridPipelineParallel(Parallel):
         split_points,
         device_groups,
         samples_allocated,
+        activation_checkpointing_budgets=[],
     ):
         world_rank = self.process_config.rank
         world_size = self.process_config.world_size
@@ -409,7 +453,13 @@ class HybridPipelineParallel(Parallel):
         pipe = self._build_pipe(split_points, microbatch_sample)
 
         pipeline_stage_train, pipeline_stage_eval = self._build_stages(
-            pipe, pp_ranks, pp_group, ddp_ranks, ddp_group, device_group_mask
+            pipe,
+            pp_ranks,
+            pp_group,
+            ddp_ranks,
+            ddp_group,
+            device_group_mask,
+            activation_checkpointing_budgets,
         )
         self.model = pipeline_stage_train.submod
 

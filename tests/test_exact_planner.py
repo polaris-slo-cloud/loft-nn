@@ -36,13 +36,13 @@ class TestExactPlanner:
         )
 
         worker1 = Worker(
-            rank=0, compute_capacity=1 / 2000, available_memory=num_micro_batches * 40
+            rank=0, compute_capacity=1 / 2000, batch_size_limit=num_micro_batches * 40
         )
         worker2 = Worker(
-            rank=1, compute_capacity=1 / 1000, available_memory=num_micro_batches * 20
+            rank=1, compute_capacity=1 / 1000, batch_size_limit=num_micro_batches * 20
         )
         worker3 = Worker(
-            rank=2, compute_capacity=1 / 1000, available_memory=num_micro_batches * 20
+            rank=2, compute_capacity=1 / 1000, batch_size_limit=num_micro_batches * 20
         )
         worker_group = WorkerGroup(
             workers=[worker1, worker2, worker3],
@@ -54,7 +54,7 @@ class TestExactPlanner:
         )
 
         self.profiler.profile(model, input, worker_group, micro_batch_size)
-        split_points, device_groups, samples_allocated = self.planner.plan(
+        split_points, device_groups, samples_allocated, _ = self.planner.plan(
             model, worker_group, micro_batch_size, num_micro_batches, parallel
         )
 
@@ -86,17 +86,17 @@ class TestExactPlanner:
         )
 
         worker1 = Worker(
-            rank=0, compute_capacity=1 / 1000, available_memory=num_micro_batches * 32
+            rank=0, compute_capacity=1 / 1000, batch_size_limit=num_micro_batches * 32
         )
         worker2 = Worker(
-            rank=1, compute_capacity=1 / 1000, available_memory=num_micro_batches * 32
+            rank=1, compute_capacity=1 / 1000, batch_size_limit=num_micro_batches * 32
         )
         worker_group = WorkerGroup(
             workers=[worker1, worker2], d2d_bandwidths={(worker1, worker2): 1}
         )
 
         self.profiler.profile(model, input, worker_group, micro_batch_size)
-        split_points, device_groups, samples_allocated = self.planner.plan(
+        split_points, device_groups, samples_allocated, _ = self.planner.plan(
             model, worker_group, micro_batch_size, num_micro_batches
         )
 
@@ -120,19 +120,19 @@ class TestExactPlanner:
         worker1 = Worker(
             rank=0,
             compute_capacity=1 / 1000,
-            available_memory=num_micro_batches * 10_000,
+            batch_size_limit=num_micro_batches * 10_000,
         )
         worker2 = Worker(
             rank=1,
             compute_capacity=1 / 1000,
-            available_memory=num_micro_batches * 10_000,
+            batch_size_limit=num_micro_batches * 10_000,
         )
         worker_group = WorkerGroup(
             workers=[worker1, worker2], d2d_bandwidths={(worker1, worker2): 10**100}
         )
 
         self.profiler.profile(model, input, worker_group, micro_batch_size)
-        split_points, device_groups, samples_allocated = self.planner.plan(
+        split_points, device_groups, samples_allocated, _ = self.planner.plan(
             model, worker_group, micro_batch_size, num_micro_batches
         )
 
@@ -154,13 +154,13 @@ class TestExactPlanner:
         )
 
         worker1 = Worker(
-            rank=0, compute_capacity=1 / 1000, available_memory=num_micro_batches * 48
+            rank=0, compute_capacity=1 / 1000, batch_size_limit=num_micro_batches * 48
         )
         worker2 = Worker(
-            rank=1, compute_capacity=1 / 1000, available_memory=num_micro_batches * 48
+            rank=1, compute_capacity=1 / 1000, batch_size_limit=num_micro_batches * 48
         )
         worker3 = Worker(
-            rank=2, compute_capacity=1 / 1000, available_memory=num_micro_batches * 48
+            rank=2, compute_capacity=1 / 1000, batch_size_limit=num_micro_batches * 48
         )
         worker_group = WorkerGroup(
             workers=[worker1, worker2, worker3],
@@ -174,7 +174,7 @@ class TestExactPlanner:
         self.profiler.profile(
             model, input, worker_group, micro_batch_size, repetitions=3
         )
-        split_points, device_groups, samples_allocated = self.planner.plan(
+        split_points, device_groups, samples_allocated, _ = self.planner.plan(
             model, worker_group, micro_batch_size, num_micro_batches
         )
 

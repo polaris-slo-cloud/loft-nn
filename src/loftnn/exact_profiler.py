@@ -5,6 +5,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 
+from torch.distributed import ProcessGroup
 from torch.nn import Embedding, ReLU
 
 from loftnn.cache import CacheProvider, CacheType
@@ -33,10 +34,12 @@ class ExactProfiler(Profiler):
         cache_provider: CacheProvider,
         sample_allocator: SampleAllocator,
         distributed: bool = True,
+        process_group: ProcessGroup = None,
     ):
         self.cache_provider = cache_provider
         self.sample_allocator = sample_allocator
         self.distributed = distributed
+        self.process_group = process_group
 
     def get_forward_execution_time(
         self, layer: nn.Module, worker: Worker, sample_size: int
@@ -70,7 +73,7 @@ class ExactProfiler(Profiler):
         repetitions: int = DEFAULT_REPETITIONS,
     ):
         layers = model_to_layers(model)
-        rank = dist.get_rank() if self.distributed else 0
+        rank = dist.get_rank(group=self.process_group) if self.distributed else 0
 
         for n in range(1, len(worker_group) + 1):
             for l in range(1, len(layers) + 1):
@@ -134,21 +137,35 @@ class ExactProfiler(Profiler):
             )
 
             if rank == 0:
-                gather_list = [None for _ in range(dist.get_world_size())]
-                dist.gather_object({}, gather_list, dst=0)
+                gather_list = [
+                    None for _ in range(dist.get_world_size(group=self.process_group))
+                ]
+                dist.gather_object({}, gather_list, dst=0, group=self.process_group)
 
                 for worker_cache in gather_list:
                     forward_execution_time_cache.update(worker_cache)
 
-                gather_list = [None for _ in range(dist.get_world_size())]
-                dist.gather_object({}, gather_list, dst=0)
+                gather_list = [
+                    None for _ in range(dist.get_world_size(group=self.process_group))
+                ]
+                dist.gather_object({}, gather_list, dst=0, group=self.process_group)
 
                 for worker_cache in gather_list:
                     backward_execution_time_cache.update(worker_cache)
             else:
                 gather_list = None
-                dist.gather_object(forward_execution_time_cache, gather_list, dst=0)
-                dist.gather_object(backward_execution_time_cache, gather_list, dst=0)
+                dist.gather_object(
+                    forward_execution_time_cache,
+                    gather_list,
+                    dst=0,
+                    group=self.process_group,
+                )
+                dist.gather_object(
+                    backward_execution_time_cache,
+                    gather_list,
+                    dst=0,
+                    group=self.process_group,
+                )
 
         if logger.isEnabledFor(logging.INFO):
             caches = vars(self.cache_provider)

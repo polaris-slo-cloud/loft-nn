@@ -9,7 +9,7 @@ from torch import Tensor
 from loftnn.batch import max_batch_size
 from loftnn.model_utils import LayerInputProvider
 from loftnn.types import Device
-from loftnn.worker_utils import compute_capacity
+from loftnn.worker_utils import compute_capacity, free_memory
 
 
 class WorkerDataCollector:
@@ -23,7 +23,7 @@ class WorkerDataCollector:
     def collect_compute_capacities(self) -> dict[int, int]:
         return self._collect_from_workers(compute_capacity(self.device))
 
-    def collect_available_memory(
+    def collect_batch_size_limits(
         self,
         model: nn.Module,
         input_sample: Tensor,
@@ -32,6 +32,23 @@ class WorkerDataCollector:
             model, self.layer_input, self.device, input_sample
         )
         return self._collect_from_workers(batch_size_limit)
+
+    def collect_device_memory(self) -> dict[int, dict[Device, int]]:
+        rank = dist.get_rank()
+
+        cpu_memory = self._collect_from_workers(free_memory(Device.cpu))
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            cuda_memory = self._collect_from_workers(free_memory(Device.cuda))
+
+        device_memory = None
+        if rank == 0:
+            device_memory = {}
+            for i, m in cpu_memory.items():
+                device_memory[i] = {Device.cpu: m}
+            for i, m in cuda_memory.items():
+                device_memory[i][Device.cuda] = m
+        return device_memory
 
     def collect_d2d_bandwidths(self) -> dict[tuple[int, int], int]:
         size = 10_000_000  # 10 MB

@@ -1,6 +1,6 @@
 import copy
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 
@@ -13,10 +13,8 @@ class Device(str, Enum):
 class Worker:
     rank: int
     compute_capacity: int
-    available_memory: int
-
-    def batch_size(self) -> int:
-        return self.available_memory
+    batch_size_limit: int
+    device_memory: dict[Device, int] = field(default=None, compare=False)
 
     def is_faster(self, other) -> bool:
         return self.compute_capacity > other.compute_capacity
@@ -32,7 +30,7 @@ class WorkerGroup:
 
     def get_fastest_with_memory(self, samples_to_transfer):
         candidates = [
-            d for d in self.workers if d.available_memory >= samples_to_transfer
+            d for d in self.workers if d.batch_size_limit >= samples_to_transfer
         ]
         if not candidates:
             raise ValueError("No device has enough memory to transfer the samples")

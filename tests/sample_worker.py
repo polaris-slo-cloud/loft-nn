@@ -2,13 +2,13 @@ from loftnn.types import Worker, WorkerGroup
 
 
 def simple_worker_group(
-    num_workers, available_memory, compute_capacity=1 / 1000, bandwidth=1
+    num_workers, batch_size_limit, compute_capacity=1 / 1000, bandwidth=1
 ):
     workers = [
         Worker(
             rank=i,
             compute_capacity=compute_capacity,
-            available_memory=available_memory,
+            batch_size_limit=batch_size_limit,
         )
         for i in range(num_workers)
     ]
@@ -24,20 +24,20 @@ def simple_worker_group(
 def edge_cloud_worker_group(num_micro_batches):
     # edge
     worker1 = Worker(
-        rank=0, compute_capacity=1 / 5000, available_memory=num_micro_batches * 20
+        rank=0, compute_capacity=1 / 5000, batch_size_limit=num_micro_batches * 20
     )
     worker2 = Worker(
-        rank=1, compute_capacity=1 / 5000, available_memory=num_micro_batches * 20
+        rank=1, compute_capacity=1 / 5000, batch_size_limit=num_micro_batches * 20
     )
     worker3 = Worker(
-        rank=2, compute_capacity=1 / 5000, available_memory=num_micro_batches * 20
+        rank=2, compute_capacity=1 / 5000, batch_size_limit=num_micro_batches * 20
     )
     # cloud
     worker4 = Worker(
-        rank=3, compute_capacity=1 / 1000, available_memory=num_micro_batches * 60
+        rank=3, compute_capacity=1 / 1000, batch_size_limit=num_micro_batches * 60
     )
     worker5 = Worker(
-        rank=4, compute_capacity=1 / 1000, available_memory=num_micro_batches * 60
+        rank=4, compute_capacity=1 / 1000, batch_size_limit=num_micro_batches * 60
     )
 
     workers = [worker1, worker2, worker3, worker4, worker5]

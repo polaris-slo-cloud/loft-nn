@@ -40,7 +40,7 @@ class TestPlanModels:
         )
 
         worker_group = simple_worker_group(
-            num_workers=6, available_memory=num_micro_batches * 240
+            num_workers=6, batch_size_limit=num_micro_batches * 240
         )
 
         print("Profiling...")
@@ -53,7 +53,7 @@ class TestPlanModels:
 
         print("Planning...")
         plan_start = time.time()
-        split_points, device_groups, samples_allocated = self.planner.plan(
+        split_points, device_groups, samples_allocated, _ = self.planner.plan(
             resnet_model, worker_group, micro_batch_size, num_micro_batches
         )
         plan_end = time.time()

@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 class PlanningTimeScalingExperiment(Experiment):
     def _worker_group(self, num_workers: int) -> WorkerGroup:
-        return simple_worker_group(num_workers, available_memory=240)
+        return simple_worker_group(num_workers, batch_size_limit=240)
 
     def run(self, device: Device):
         layer_input = LayerInputProvider()

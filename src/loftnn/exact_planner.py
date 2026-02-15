@@ -57,7 +57,14 @@ class ExactPlanner(Planner):
         split_points, device_groups, samples_allocated = self._decode_result(
             result, Q, num_stages
         )
-        return split_points, device_groups, samples_allocated
+        activation_checkpointing_budgets = [1.0] + [1.0 for _ in split_points]
+
+        return (
+            split_points,
+            device_groups,
+            samples_allocated,
+            activation_checkpointing_budgets,
+        )
 
     def _plan_hpp(
         self,
