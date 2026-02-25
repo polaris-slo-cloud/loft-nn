@@ -42,6 +42,20 @@ class EdgeCloudPlanner(Planner):
                 groups.append([num])
         return groups
 
+    def _disjoint(self, cliques):
+        disjoint_cliques = []
+        nodes_seen = set()
+
+        cliques.sort(key=len, reverse=True)
+        for clique in cliques:
+            disjoint_clique = [n for n in clique if n not in nodes_seen]
+
+            if disjoint_clique:
+                disjoint_cliques.append(disjoint_clique)
+                nodes_seen.update(disjoint_clique)
+
+        return disjoint_cliques
+
     def plan(
         self,
         model: nn.Module,
@@ -115,7 +129,8 @@ class EdgeCloudPlanner(Planner):
                 for other_worker in similiar_d2d_bandwidth[max_d2d_bandwidth]:
                     G.add_edge(worker.rank, other_worker.rank, bandwidth=d2d_bandwidth)
 
-        device_group_ranks = list(nx.find_cliques(G))
+        cliques = list(nx.find_cliques(G))
+        device_group_ranks = self._disjoint(cliques)
 
         logger.info(f"device groups from clique: {device_group_ranks}")
 
@@ -317,7 +332,7 @@ class EdgeCloudPlanner(Planner):
 
         if memory_estimation_factor is None:
             # account for memory fragmentation, overheads,... and have a safety margin
-            memory_estimation_factor = (num_micro_batches / 2) * 1.1
+            memory_estimation_factor = 1.1
 
         split_points_complete = [0] + split_points + [len(layers)]
         for idx, split_point in enumerate(split_points_complete):
@@ -340,7 +355,11 @@ class EdgeCloudPlanner(Planner):
                     )
                     total_bytes += int(
                         (layer_statistics.total_output_bytes * memory_estimation_factor)
-                        + layer_statistics.total_param_bytes
+                        + (
+                            layer_statistics.total_param_bytes
+                            * memory_estimation_factor
+                            * 2  # account for optimizer states
+                        )
                     )
 
                     is_first_layer = i == 0

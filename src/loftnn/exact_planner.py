@@ -508,4 +508,8 @@ class ExactPlanner(Planner):
             split_points.append(lp)
             device_groups.append(np)
 
+        split_points = list(reversed(split_points))
+        device_groups = list(reversed(device_groups))
+        samples_allocated = list(reversed(samples_allocated))
+
         return split_points, device_groups, samples_allocated

@@ -180,13 +180,13 @@ class TestEdgeCloudPlanner:
             rank=1,
             compute_capacity=1 / 1000,
             batch_size_limit=micro_batch_size * 32,
-            device_memory={Device.cpu: 75000},
+            device_memory={Device.cpu: 110000},
         )
         worker3 = Worker(
             rank=2,
             compute_capacity=1 / 1500,
             batch_size_limit=micro_batch_size * 32,
-            device_memory={Device.cpu: 50000},
+            device_memory={Device.cpu: 95000},
         )
         workers = [worker1, worker2, worker3]
         worker_group = WorkerGroup(
@@ -206,4 +206,4 @@ class TestEdgeCloudPlanner:
             round(budget, 2) for budget in activation_checkpointing_budgets
         ]
         assert len(activation_checkpointing_budgets) == 3
-        assert activation_checkpointing_budgets == [1, 0.61, 0.17]
+        assert activation_checkpointing_budgets == [1, 0.75, 0.22]

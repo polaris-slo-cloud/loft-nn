@@ -246,6 +246,33 @@ class HybridPipelineParallel(Parallel):
         )
         return device_group_mask
 
+    def _split_microbatch(
+        self, microbatch_sample, samples_allocated, ddp_ranks, ddp_group
+    ):
+        microbatch_split_at = None
+        if ddp_group:
+            microbatch_split = [
+                samples_allocated[i][worker]
+                for i in range(len(samples_allocated))
+                for worker in samples_allocated[i].keys()
+                if worker.rank in ddp_ranks
+            ]
+            microbatch_split_at = torch.cumsum(torch.tensor(microbatch_split), dim=0)
+
+            microbatch_split_sum = sum(microbatch_split)
+            microbatch_sample_shape = microbatch_sample.shape[0]
+            if microbatch_split_sum != microbatch_sample_shape:
+                raise ValueError(
+                    f"Mismatch between samples allocated and microbatch sample shape: {microbatch_split_sum} != {microbatch_sample_shape}"
+                )
+
+            if self.process_config.rank in ddp_ranks:
+                microbatch_sample = torch.tensor_split(
+                    microbatch_sample, microbatch_split_at
+                )[ddp_group.rank()]
+
+        return microbatch_sample, microbatch_split_at
+
     def _build_pipe(self, split_points, microbatch_sample):
         layers = model_to_layers(self.model, include_names=True)
         split_spec = {
@@ -426,29 +453,16 @@ class HybridPipelineParallel(Parallel):
         ddp_ranks = [
             i for i in range(len(device_group_mask)) if device_group_mask[i] <= 1
         ]
-        ddp_group = dist.new_group(ranks=ddp_ranks)
+        if ddp_ranks:
+            ddp_group = dist.new_group(ranks=ddp_ranks)
+        else:
+            ddp_group = None
+            logger.info("using no data parallelism")
 
         microbatch_sample = self.hybrid_pipeline_config.microbatch_sample
-
-        microbatch_split = [
-            samples_allocated[i][worker]
-            for i in range(len(samples_allocated))
-            for worker in samples_allocated[i].keys()
-            if worker.rank in ddp_ranks
-        ]
-        microbatch_split_at = torch.cumsum(torch.tensor(microbatch_split), dim=0)
-
-        microbatch_split_sum = sum(microbatch_split)
-        microbatch_sample_shape = microbatch_sample.shape[0]
-        if microbatch_split_sum != microbatch_sample_shape:
-            raise ValueError(
-                f"Mismatch between samples allocated and microbatch sample shape: {microbatch_split_sum} != {microbatch_sample_shape}"
-            )
-
-        if world_rank in ddp_ranks:
-            microbatch_sample = torch.tensor_split(
-                microbatch_sample, microbatch_split_at
-            )[ddp_group.rank()]
+        microbatch_sample, microbatch_split_at = self._split_microbatch(
+            microbatch_sample, samples_allocated, ddp_ranks, ddp_group
+        )
 
         pipe = self._build_pipe(split_points, microbatch_sample)
 

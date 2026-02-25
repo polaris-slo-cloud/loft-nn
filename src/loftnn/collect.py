@@ -37,6 +37,7 @@ class WorkerDataCollector:
         rank = dist.get_rank()
 
         cpu_memory = self._collect_from_workers(free_memory(Device.cpu))
+        cuda_memory = {}
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             cuda_memory = self._collect_from_workers(free_memory(Device.cuda))

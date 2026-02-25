@@ -73,7 +73,7 @@ class TestExactPlanner:
         assert len(device_groups) == 1
         assert device_groups == [1]
         assert len(samples_allocated) == 2
-        assert samples_allocated == [{worker2: 20, worker3: 20}, {worker1: 40}]
+        assert samples_allocated == [{worker1: 40}, {worker2: 20, worker3: 20}]
 
     def test_plan_low_bandwidth_favors_pipeline_parallelism(self):
         model = BalancedNN2()
@@ -105,7 +105,7 @@ class TestExactPlanner:
         assert len(device_groups) == 1
         assert device_groups == [1]
         assert len(samples_allocated) == 2
-        assert samples_allocated == [{worker2: 32}, {worker1: 32}]
+        assert samples_allocated == [{worker1: 32}, {worker2: 32}]
 
     def test_plan_high_bandwidth_favors_data_parallelism(self):
         model = BalancedNN2()
@@ -179,8 +179,8 @@ class TestExactPlanner:
         )
 
         assert len(split_points) == 2
-        assert split_points == [2, 1]
+        assert split_points == [1, 2]
         assert len(device_groups) == 2
-        assert device_groups == [2, 1]
+        assert device_groups == [1, 2]
         assert len(samples_allocated) == 3
-        assert samples_allocated == [{worker3: 48}, {worker2: 48}, {worker1: 48}]
+        assert samples_allocated == [{worker1: 48}, {worker2: 48}, {worker3: 48}]
