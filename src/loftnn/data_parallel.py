@@ -24,10 +24,7 @@ class DataParallel(Parallel):
             timeout=process_config.timeout,
         )
 
-        if device == Device.cuda:
-            self.ddp_model = DDP(model, device_ids=[process_config.local_rank])
-        elif device == Device.cpu:
-            self.ddp_model = DDP(model, device_ids=None)
+        self.ddp_model = DDP(model, device_ids=None)
 
     def forward_parallel(self, *inputs, **kwargs):
         return self.ddp_model(*inputs, **kwargs)

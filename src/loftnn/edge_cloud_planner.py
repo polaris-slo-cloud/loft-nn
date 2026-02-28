@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 class EdgeCloudPlanner(Planner):
     layer_input: LayerInputProvider
     sample_allocator: SampleAllocator
+    device: Device
 
     def __init__(
         self,
@@ -330,9 +331,14 @@ class EdgeCloudPlanner(Planner):
 
         activation_checkpointing_budgets = []
 
+        optimizer_states_factor = 3
         if memory_estimation_factor is None:
             # account for memory fragmentation, overheads,... and have a safety margin
             memory_estimation_factor = 1.1
+
+        num_stages = (  # used to account for activation memory in 1F1B schedule
+            len(split_points) + 1
+        )
 
         split_points_complete = [0] + split_points + [len(layers)]
         for idx, split_point in enumerate(split_points_complete):
@@ -351,21 +357,29 @@ class EdgeCloudPlanner(Planner):
                     )
 
                     fwd_bwd_bytes += int(
-                        layer_statistics.total_output_bytes * memory_estimation_factor
+                        layer_statistics.total_output_bytes
+                        * num_stages
+                        * memory_estimation_factor
                     )
                     total_bytes += int(
-                        (layer_statistics.total_output_bytes * memory_estimation_factor)
+                        (
+                            layer_statistics.total_output_bytes
+                            * num_stages
+                            * memory_estimation_factor
+                        )
                         + (
                             layer_statistics.total_param_bytes
                             * memory_estimation_factor
-                            * 2  # account for optimizer states
+                            * optimizer_states_factor
                         )
                     )
 
                     is_first_layer = i == 0
                     if prev_split_point == 0 and is_first_layer:
                         total_bytes += int(
-                            layer_statistics.total_input * memory_estimation_factor
+                            layer_statistics.total_input
+                            * num_stages
+                            * memory_estimation_factor
                         )
 
                 workers_have_device_memory = [
