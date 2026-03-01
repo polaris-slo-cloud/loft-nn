@@ -2,8 +2,8 @@ from setuptools import setup, find_packages
 
 setup(
     name="loftnn",
-    version="0.0.1",
-    description="LoftNN is a framework for distributed training of neural networks in the edge-cloud.",
+    version="1.0.0",
+    description="LoftNN is a framework for distributed training of neural networks in the edge-cloud-space continuum.",
     url="https://github.com/m-maresch/loftnn",
     author="Maximilian Maresch",
     author_email="maxi.maresch@gmail.com",

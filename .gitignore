@@ -1,6 +1,8 @@
 .DS_Store
 
 *.pickle
+*_planner_graph.png
+experimental_results.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

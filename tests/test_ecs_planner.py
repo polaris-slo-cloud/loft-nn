@@ -2,24 +2,24 @@ import torch
 import torch.nn as nn
 
 from loftnn.cache import CacheProvider
-from loftnn.edge_cloud_planner import EdgeCloudPlanner
+from loftnn.ecs_planner import ECSPlanner
 from loftnn.model_utils import LayerInputProvider
 from loftnn.profiler import NoopProfiler
 from loftnn.sample_allocation import SampleAllocator
 from loftnn.types import Device, Worker, WorkerGroup
 
 from .sample_model import SimpleNN, BalancedNN3, get_sample_input
-from .sample_worker import edge_cloud_worker_group
+from .sample_worker import ecs_worker_group
 
 
-class TestEdgeCloudPlanner:
+class TestECSPlanner:
 
     def setup_method(self):
         cache_provider = CacheProvider()
         sample_allocator = SampleAllocator(cache_provider=cache_provider)
         self.layer_input = LayerInputProvider()
         self.profiler = NoopProfiler()
-        self.planner = EdgeCloudPlanner(
+        self.planner = ECSPlanner(
             layer_input=self.layer_input,
             sample_allocator=sample_allocator,
             device=Device.cpu,
@@ -34,7 +34,7 @@ class TestEdgeCloudPlanner:
             model, input_shape=get_sample_input(model, micro_batch_size).shape
         )
 
-        worker_group = edge_cloud_worker_group(num_micro_batches)
+        worker_group = ecs_worker_group(num_micro_batches)
 
         split_points, device_groups, samples_allocated, _ = self.planner.plan(
             model, worker_group, micro_batch_size, num_micro_batches

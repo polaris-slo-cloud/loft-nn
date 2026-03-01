@@ -62,7 +62,7 @@ class PipelineConfiguration:
 
 class HybridPipelinePlanningAlgorithm(str, Enum):
     exact = "exact"
-    edge_cloud = "edge_cloud"
+    ecs = "ecs"
 
 
 @dataclass(frozen=True)

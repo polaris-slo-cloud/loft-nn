@@ -21,7 +21,7 @@ from loftnn import HybridPipelineConfiguration, ProcessConfiguration
 from loftnn.cache import CacheProvider
 from loftnn.collect import WorkerDataCollector
 from loftnn.configuration import HybridPipelinePlanningAlgorithm
-from loftnn.edge_cloud_planner import EdgeCloudPlanner
+from loftnn.ecs_planner import ECSPlanner
 from loftnn.exact_planner import ExactPlanner
 from loftnn.exact_profiler import ExactProfiler
 from loftnn.logging import log_execution_time
@@ -116,12 +116,9 @@ class HybridPipelineParallel(Parallel):
                 process_group=self.slow_ops_group,
             )
             planner = ExactPlanner(profiler=profiler, sample_allocator=sample_allocator)
-        elif (
-            self.hybrid_pipeline_config.planner
-            == HybridPipelinePlanningAlgorithm.edge_cloud
-        ):
+        elif self.hybrid_pipeline_config.planner == HybridPipelinePlanningAlgorithm.ecs:
             profiler = NoopProfiler()
-            planner = EdgeCloudPlanner(
+            planner = ECSPlanner(
                 layer_input=self.layer_input,
                 sample_allocator=sample_allocator,
                 device=self.device,

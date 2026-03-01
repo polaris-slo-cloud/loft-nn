@@ -6,7 +6,7 @@ import torch
 from torchvision.models import resnet50
 
 from loftnn.cache import CacheProvider
-from loftnn.edge_cloud_planner import EdgeCloudPlanner
+from loftnn.ecs_planner import ECSPlanner
 from loftnn.exact_planner import ExactPlanner
 from loftnn.experiments import Experiment, ExperimentRunner, ExperimentVisualizer
 from loftnn.exact_profiler import ExactProfiler
@@ -38,7 +38,7 @@ class PlanningTimeScalingExperiment(Experiment):
             profiler=exact_profiler, sample_allocator=sample_allocator
         )
 
-        edge_cloud_planner = EdgeCloudPlanner(
+        ecs_planner = ECSPlanner(
             layer_input=layer_input,
             sample_allocator=SampleAllocator(cache_provider=CacheProvider()),
             device=device,
@@ -96,17 +96,17 @@ class PlanningTimeScalingExperiment(Experiment):
             )
             logger.info(f"Took {exact_plan_duration}s")
 
-            logger.info(f"Edge-cloud planning for {name}...")
-            edge_cloud_plan_duration, (
-                split_points_edge_cloud,
-                device_groups_edge_cloud,
-                samples_allocated_edge_cloud,
+            logger.info(f"ECS planning for {name}...")
+            ecs_plan_duration, (
+                split_points_ecs,
+                device_groups_ecs,
+                samples_allocated_ecs,
             ) = self.time(
-                lambda: edge_cloud_planner.plan(
+                lambda: ecs_planner.plan(
                     model, worker_group, micro_batch_size, num_micro_batches
                 )
             )
-            logger.info(f"Took {edge_cloud_plan_duration}s")
+            logger.info(f"Took {ecs_plan_duration}s")
 
             yield {
                 "id": name,
@@ -122,25 +122,25 @@ class PlanningTimeScalingExperiment(Experiment):
                         for (worker, allocation) in sample_allocation.items()
                     ],
                 },
-                "edgeCloud": {
+                "ecs": {
                     "profileDuration": 0,
-                    "planDuration": edge_cloud_plan_duration,
-                    "splitPoints": split_points_edge_cloud,
-                    "deviceGroups": device_groups_edge_cloud,
+                    "planDuration": ecs_plan_duration,
+                    "splitPoints": split_points_ecs,
+                    "deviceGroups": device_groups_ecs,
                     "samplesAllocated": [
                         {worker.rank: allocation}
-                        for sample_allocation in samples_allocated_edge_cloud
+                        for sample_allocation in samples_allocated_ecs
                         for (worker, allocation) in sample_allocation.items()
                     ],
                 },
             }
 
     def visualize(self, results):
-        labels = ["Exact", "Edge-cloud"]
+        labels = ["Exact planner", "ECS planner"]
         worker_counts = [result["num_workers"] for result in results]
         planning_times = [
             [result["exact"]["planDuration"] for result in results],
-            [result["edgeCloud"]["planDuration"] for result in results],
+            [result["ecs"]["planDuration"] for result in results],
         ]
         plot_planning_time_scaling(
             labels=labels,

@@ -21,8 +21,8 @@ def simple_worker_group(
     return worker_group
 
 
-def edge_cloud_worker_group(num_micro_batches):
-    # edge
+def ecs_worker_group(num_micro_batches):
+    # edge, space
     worker1 = Worker(
         rank=0, compute_capacity=1 / 5000, batch_size_limit=num_micro_batches * 20
     )
@@ -47,7 +47,7 @@ def edge_cloud_worker_group(num_micro_batches):
         for j in range(i + 1, len(workers))
     }
 
-    # edge
+    # edge, space
     d2d_bandwidths[(worker1, worker2)] = 10**5
     d2d_bandwidths[(worker2, worker3)] = 10**5
     d2d_bandwidths[(worker1, worker3)] = 10**5
