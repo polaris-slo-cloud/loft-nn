@@ -27,7 +27,7 @@ from loftnn.exact_profiler import ExactProfiler
 from loftnn.logging import log_execution_time
 from loftnn.model_utils import LayerInputProvider, model_to_layers
 from loftnn.parallel import Parallel
-from loftnn.pipeline_schedule import ScheduleHybridPipelineParallel1F1B
+from loftnn.pipeline_schedule import ScheduleECS1F1B
 from loftnn.profiler import NoopProfiler
 from loftnn.sample_allocation import SampleAllocator
 from loftnn.types import Device, Worker, WorkerGroup
@@ -385,7 +385,7 @@ class HybridPipelineParallel(Parallel):
             )
         )
 
-        pipeline_schedule_train = ScheduleHybridPipelineParallel1F1B(
+        pipeline_schedule_train = ScheduleECS1F1B(
             pipeline_stage_train,
             n_microbatches=self.hybrid_pipeline_config.num_microbatches,
             microbatch_split_at=microbatch_split_at,
@@ -398,7 +398,7 @@ class HybridPipelineParallel(Parallel):
             loss_fn=self.hybrid_pipeline_config.loss_fn,
         )
 
-        pipeline_schedule_eval = ScheduleHybridPipelineParallel1F1B(
+        pipeline_schedule_eval = ScheduleECS1F1B(
             pipeline_stage_eval,
             n_microbatches=self.hybrid_pipeline_config.num_microbatches,
             microbatch_split_at=microbatch_split_at,

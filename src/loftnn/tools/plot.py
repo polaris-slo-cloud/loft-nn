@@ -21,7 +21,7 @@ def plot_parameters_by_layer(model):
     plt.savefig("parameters_by_layer.png")
     print("saved parameters_by_layer.png")
 
-    plt.show()
+    plt.close()
 
 
 def plot_training_times_by_epoch(times_by_label, xlabel="Epoch", ylim=100):
@@ -44,7 +44,30 @@ def plot_training_times_by_epoch(times_by_label, xlabel="Epoch", ylim=100):
     plt.savefig("training_times_by_epoch.png")
     print("saved training_times_by_epoch.png")
 
-    plt.show()
+    plt.close()
+
+
+def plot_training_losses_by_epoch(losses_by_label, xlabel="Epoch", ylim=1):
+    for label, losses in losses_by_label.items():
+        epochs = range(1, len(losses) + 1)
+        plt.plot(epochs, losses, label=label, linestyle="-", marker="o")
+
+    plt.title("Training Losses")
+    plt.xlabel(xlabel)
+    plt.ylabel("Loss")
+
+    max_epochs = max(len(losses) for losses in losses_by_label.values())
+    plt.xticks(range(1, max_epochs + 1))
+    plt.ylim(0, ylim)
+
+    plt.legend()
+    plt.grid(True, linestyle="--", alpha=0.6)
+    plt.tight_layout()
+
+    plt.savefig("training_losses_by_epoch.png")
+    print("saved training_losses_by_epoch.png")
+
+    plt.close()
 
 
 def plot_profiling_and_planning_times(
@@ -73,7 +96,7 @@ def plot_profiling_and_planning_times(
     plt.savefig("profiling_and_planning_times.png")
     print("saved profiling_and_planning_times.png")
 
-    plt.show()
+    plt.close()
 
 
 def plot_planning_time_scaling(labels, worker_counts, planning_times):
@@ -95,19 +118,26 @@ def plot_planning_time_scaling(labels, worker_counts, planning_times):
     plt.savefig("planning_time_scaling.png")
     print("saved planning_time_scaling.png")
 
-    plt.show()
+    plt.close()
 
 
-def plot_model_size_limits(labels, model_size_limits):
+def plot_model_size_limits(labels, model_size_limits, ylim=1000):
     fig, ax = plt.subplots()
 
-    ax.bar(labels, model_size_limits, label="Model size limit")
+    bar = ax.bar(
+        labels,
+        model_size_limits,
+        label="Model size limit",
+        color=["skyblue", "salmon"],
+    )
 
-    ax.set_ylabel("Parameters")
+    ax.bar_label(bar, labels=model_size_limits, padding=3)
+
+    ax.set_ylim(0, ylim)
+    ax.set_ylabel("Parameters (M)")
     ax.set_title("Model size limits")
-    ax.legend()
 
     plt.savefig("model_size_limits.png")
     print("saved model_size_limits.png")
 
-    plt.show()
+    plt.close()

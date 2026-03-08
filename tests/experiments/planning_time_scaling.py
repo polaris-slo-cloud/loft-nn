@@ -85,6 +85,7 @@ class PlanningTimeScalingExperiment(Experiment):
                 split_points_exact,
                 device_groups_exact,
                 samples_allocated_exact,
+                activation_checkpointing_budgets_exact,
             ) = self.time(
                 lambda: exact_planner.plan(
                     model,
@@ -101,6 +102,7 @@ class PlanningTimeScalingExperiment(Experiment):
                 split_points_ecs,
                 device_groups_ecs,
                 samples_allocated_ecs,
+                activation_checkpointing_budgets_ecs,
             ) = self.time(
                 lambda: ecs_planner.plan(
                     model, worker_group, micro_batch_size, num_micro_batches
@@ -121,6 +123,7 @@ class PlanningTimeScalingExperiment(Experiment):
                         for sample_allocation in samples_allocated_exact
                         for (worker, allocation) in sample_allocation.items()
                     ],
+                    "activationCheckpointingBudgets": activation_checkpointing_budgets_exact,
                 },
                 "ecs": {
                     "profileDuration": 0,
@@ -132,6 +135,7 @@ class PlanningTimeScalingExperiment(Experiment):
                         for sample_allocation in samples_allocated_ecs
                         for (worker, allocation) in sample_allocation.items()
                     ],
+                    "activationCheckpointingBudgets": activation_checkpointing_budgets_ecs,
                 },
             }
 

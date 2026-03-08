@@ -1,17 +1,15 @@
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 
 from torch.distributed import init_process_group, destroy_process_group
-from torch.distributed.pipelining import (
-    pipeline,
-    SplitPoint,
-    Schedule1F1B,
-    ScheduleGPipe,
-)
+from torch.distributed.pipelining import pipeline, SplitPoint
+from torch.distributed.pipelining._IR import _modify_graph_op_device
 
 from loftnn import ProcessConfiguration, PipelineConfiguration
 from loftnn.model_utils import model_to_layers
 from loftnn.parallel import Parallel
+from loftnn.pipeline_schedule import ScheduleECS1F1B
 from loftnn.types import Device
 
 
@@ -21,6 +19,7 @@ class PipelineParallel(Parallel):
         model: nn.Module,
         process_config: ProcessConfiguration,
         pipeline_config: PipelineConfiguration,
+        device: Device,
     ):
         super(PipelineParallel, self).__init__()
         self.process_config = process_config
@@ -45,33 +44,53 @@ class PipelineParallel(Parallel):
             split_spec=split_spec,
         )
 
-        device = Device.cpu  # all nodes must use cpu for building the stage
+        stage_device = Device.cpu  # all nodes must use cpu for building the stage
 
         pipeline_stage_train = pipe.build_stage(
-            process_config.rank, device, torch.distributed.group.WORLD
+            process_config.rank, stage_device, torch.distributed.group.WORLD
         )
-        pipeline_schedule_train = Schedule1F1B(
-            pipeline_stage_train,
+        pipeline_stage_eval = pipe.build_stage(
+            process_config.rank, stage_device, torch.distributed.group.WORLD
+        )
+
+        stage_index = dist.get_rank()
+        for pipeline_stage in [pipeline_stage_train, pipeline_stage_eval]:
+            stage_module = pipe.get_stage_module(stage_index)
+            _modify_graph_op_device(stage_module, device)
+            pipeline_stage.submod = pipeline_stage.submod.to(device)
+
+            # skip initialization
+            pipeline_stage._get_init_p2p_neighbors_ops = lambda: []
+
+        self.pipeline_stage_train = pipeline_stage_train
+        self.pipeline_stage_eval = pipeline_stage_eval
+
+        pipeline_schedule_train = ScheduleECS1F1B(
+            self.pipeline_stage_train,
             n_microbatches=pipeline_config.num_microbatches,
+            microbatch_split_at=[],
+            ddp_world_ranks=[],
+            ddp_group=None,
+            prev_stage_is_ddp=False,
+            next_stage_is_ddp=False,
+            prev_non_ddp_stage_world_rank=-1,
+            next_non_ddp_stage_world_rank=-1,
             loss_fn=pipeline_config.loss_fn,
         )
 
-        pipeline_stage_eval = pipe.build_stage(
-            process_config.rank, device, torch.distributed.group.WORLD
-        )
-        pipeline_schedule_eval = ScheduleGPipe(
-            pipeline_stage_eval,
+        pipeline_schedule_eval = ScheduleECS1F1B(
+            self.pipeline_stage_eval,
             n_microbatches=pipeline_config.num_microbatches,
+            microbatch_split_at=[],
+            ddp_world_ranks=[],
+            ddp_group=None,
+            prev_stage_is_ddp=False,
+            next_stage_is_ddp=False,
+            prev_non_ddp_stage_world_rank=-1,
+            next_non_ddp_stage_world_rank=-1,
         )
 
-        # skip initialization
-        pipeline_stage_train._get_init_p2p_neighbors_ops = lambda: []
-        pipeline_stage_eval._get_init_p2p_neighbors_ops = lambda: []
-
-        self.pipeline_stage_train = pipeline_stage_train
         self.pipeline_schedule_train = pipeline_schedule_train
-
-        self.pipeline_stage_eval = pipeline_stage_eval
         self.pipeline_schedule_eval = pipeline_schedule_eval
 
         self.training = True

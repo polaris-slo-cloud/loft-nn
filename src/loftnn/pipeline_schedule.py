@@ -2,7 +2,7 @@
 # Source: https://github.com/pytorch/pytorch/blob/v2.8.0/torch/distributed/pipelining/schedules.py
 # Original Copyright (c) Meta Platforms, Inc. and affiliates
 # See PYTORCH_LICENSE in the project root for the full license text of the official PyTorch code.
-# The code has been extended to support DDP stages, enabling hybrid pipeline parallelism.
+# The code has been extended to support Gloo on GPUs and DDP stages.
 
 import logging
 import time
@@ -76,9 +76,11 @@ def _new_forward_maybe_with_nosync(self, *args, **kwargs):
     return out_val
 
 
-class ScheduleHybridPipelineParallel1F1B(PipelineScheduleSingle):
+class ScheduleECS1F1B(PipelineScheduleSingle):
     """
-    The 1F1B schedule with support for DDP stages, enabling hybrid pipeline parallelism.
+    The 1F1B schedule with support for:
+    - Gloo on GPUs
+    - DDP stages
     Will perform one forward and one backward on the microbatches in steady state.
     """
 

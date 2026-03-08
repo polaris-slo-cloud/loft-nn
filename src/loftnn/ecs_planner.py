@@ -295,10 +295,8 @@ class ECSPlanner(Planner):
                 split_points[idx + 1] if idx != (len(split_points) - 1) else len(layers)
             )
 
-            neighbourhood_size = max(1, int(len(layers) / 20))
-            neighbourhood = [
-                split_point - i for i in range(1, neighbourhood_size + 1)
-            ] + [split_point + i for i in range(1, neighbourhood_size + 1)]
+            neighbourhood_size = max(1, int(len(layers) / 10))
+            neighbourhood = [split_point + i for i in range(1, neighbourhood_size + 1)]
             for neighbour in neighbourhood:
                 if (
                     neighbour not in split_points
