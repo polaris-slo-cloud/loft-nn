@@ -54,7 +54,7 @@ class TestExactPlanner:
         )
 
         self.profiler.profile(model, input, worker_group, micro_batch_size)
-        split_points, device_groups, samples_allocated, _ = self.planner.plan(
+        split_points, device_groups, samples_allocated = self.planner.plan(
             model, worker_group, micro_batch_size, num_micro_batches, parallel
         )
 
@@ -96,7 +96,7 @@ class TestExactPlanner:
         )
 
         self.profiler.profile(model, input, worker_group, micro_batch_size)
-        split_points, device_groups, samples_allocated, _ = self.planner.plan(
+        split_points, device_groups, samples_allocated = self.planner.plan(
             model, worker_group, micro_batch_size, num_micro_batches
         )
 
@@ -132,7 +132,7 @@ class TestExactPlanner:
         )
 
         self.profiler.profile(model, input, worker_group, micro_batch_size)
-        split_points, device_groups, samples_allocated, _ = self.planner.plan(
+        split_points, device_groups, samples_allocated = self.planner.plan(
             model, worker_group, micro_batch_size, num_micro_batches
         )
 
@@ -174,7 +174,7 @@ class TestExactPlanner:
         self.profiler.profile(
             model, input, worker_group, micro_batch_size, repetitions=3
         )
-        split_points, device_groups, samples_allocated, _ = self.planner.plan(
+        split_points, device_groups, samples_allocated = self.planner.plan(
             model, worker_group, micro_batch_size, num_micro_batches
         )
 

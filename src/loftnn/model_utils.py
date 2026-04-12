@@ -56,19 +56,23 @@ class LayerInputProvider:
 
         layer_info = self.shapes_by_layer[id(layer)]
         input_shape = layer_info.input_size
-        use_int = isinstance(layer, nn.Embedding)
 
         if batch_size:
             input_shape = [batch_size] + input_shape[1:]
 
+        use_int = isinstance(layer, nn.Embedding)
         if input_sample is not None:
             input_shape = (batch_size,) + input_sample.shape
             use_int = not torch.is_floating_point(input_sample)
 
+        repeat_times = 1
+        if isinstance(layer, nn.MultiheadAttention):
+            repeat_times = 3
+
         return (
-            torch.randint(0, 10, input_shape, device=device)
+            [torch.randint(0, 10, input_shape, device=device)] * repeat_times
             if use_int
-            else torch.randn(input_shape, device=device)
+            else [torch.randn(input_shape, device=device)] * repeat_times
         )
 
 
@@ -86,7 +90,7 @@ def repeat_forward_execution(
 
         with torch.no_grad():
             start = time.time()
-            _ = layer(x)
+            _ = layer(*x)
             end = time.time()
 
         execution_time = end - start
@@ -107,10 +111,14 @@ def repeat_backward_execution(
 
     for _ in range(repetitions):
         x = input.random(layer, device, batch_size, input_sample)
-        if torch.is_floating_point(x):
-            x.requires_grad = True
 
-        y = layer(x)
+        for t in x:
+            if torch.is_floating_point(t):
+                t.requires_grad = True
+
+        y = layer(*x)
+        if not torch.is_tensor(y):
+            y = y[0]
 
         start = time.time()
         y.mean().backward()

@@ -303,14 +303,18 @@ class ExactProfiler(Profiler):
                 else torch.empty(0)
             ),
             (
-                self._random_backward_input(layer, input, device).shape
+                [
+                    grad.shape
+                    for grad in self._random_backward_input(layer, input, device)
+                ]
                 if not forward_only
                 else torch.empty(0)
             ),
         )
 
         cache[(layer_id(layer), d2d_bandwidth, forward_only, backward_only)] = (
-            size_intermediate_tensors[0].numel() + size_intermediate_tensors[1].numel()
+            size_intermediate_tensors[0].numel()
+            + sum([shape.numel() for shape in size_intermediate_tensors[1]])
         ) / (d2d_bandwidth / 4)
 
     def _random_forward_output(
@@ -323,7 +327,9 @@ class ExactProfiler(Profiler):
         layer.eval()
 
         with torch.no_grad():
-            y = layer(x)
+            y = layer(*x)
+            if not torch.is_tensor(y):
+                y = y[0]
 
         layer.train()
 
@@ -336,15 +342,18 @@ class ExactProfiler(Profiler):
         device: Device,
     ):
         x = input.random(layer, device)
-        x.requires_grad = True
+        for t in x:
+            t.requires_grad = True
         layer.eval()
 
-        y = layer(x)
+        y = layer(*x)
+        if not torch.is_tensor(y):
+            y = y[0]
         y.mean().backward()
 
         layer.train()
 
-        return x.grad
+        return [t.grad for t in x]
 
     def get_mean_d2d_bandwidth(
         self,

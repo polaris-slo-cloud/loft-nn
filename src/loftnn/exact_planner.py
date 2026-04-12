@@ -57,13 +57,11 @@ class ExactPlanner(Planner):
         split_points, device_groups, samples_allocated = self._decode_result(
             result, Q, num_stages
         )
-        activation_checkpointing_budgets = [1.0] + [1.0 for _ in split_points]
 
         return (
             split_points,
             device_groups,
             samples_allocated,
-            activation_checkpointing_budgets,
         )
 
     def _plan_hpp(
@@ -445,7 +443,7 @@ class ExactPlanner(Planner):
             hpp_round_latency = prev_hpp_round_latency
 
         try:
-            self._backtrack(lp, np, p, Q, check_validity=True)
+            [_ for _ in self._backtrack(lp, np, p, Q, check_validity=True)]
         except RuntimeError:
             hpp_round_latency = INFEASIBLE_LATENCY
 
@@ -482,7 +480,7 @@ class ExactPlanner(Planner):
         )
 
     def _backtrack(self, lp, np, p, Q, check_validity=False):
-        for s in reversed(range(1, p)):
+        for s in reversed(range(1, p + 1)):
             if lp == 0 or np == 0:
                 if check_validity:
                     raise RuntimeError("Invalid state during backtracking")

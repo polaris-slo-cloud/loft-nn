@@ -1,4 +1,5 @@
 from loftnn import PipelineConfiguration, PipelineParallel, ProcessConfiguration
+from loftnn.types import Device
 
 from .sample_model import SimpleNN, get_sample_input, get_total_parameters
 from .test_parallel import TestParallel
@@ -23,10 +24,11 @@ class TestPipelineParallel(TestParallel):
                 microbatch_sample=inp.chunk(num_microbatches)[0],
                 loss_fn=None,
             ),
+            device=Device.cpu,
         )
 
         assert get_total_parameters(pp_model) < get_total_parameters(model)
-        assert pp_model.training == True
+        assert pp_model.training
 
         pp_model.cleanup()
         self.teardown_env()

@@ -18,6 +18,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.profiler import profile, ProfilerActivity
 
 from loftnn import HybridPipelineConfiguration, ProcessConfiguration
+from loftnn.amb_planner import AMBPlanner
 from loftnn.cache import CacheProvider
 from loftnn.collect import WorkerDataCollector
 from loftnn.configuration import HybridPipelinePlanningAlgorithm
@@ -126,7 +127,7 @@ class HybridPipelineParallel(Parallel):
 
         return profiler, planner
 
-    def compute_plan(self, batch_size_limits=[]):
+    def compute_plan(self, use_ambp=True, batch_size_limits=[]):
         num_workers = self.process_config.world_size
         collector = WorkerDataCollector(
             layer_input=self.layer_input,
@@ -162,6 +163,8 @@ class HybridPipelineParallel(Parallel):
         profiler, planner = self._create_profiler_and_planner()
         split_points, device_groups, samples_allocated = None, None, None
 
+        ambp = AMBPlanner(self.layer_input, self.device)
+
         with log_execution_time("profiling", logger.info):
             profiler.profile(
                 self.model,
@@ -179,10 +182,20 @@ class HybridPipelineParallel(Parallel):
                     split_points,
                     device_groups,
                     samples_allocated,
-                    activation_checkpointing_budgets,
                 ) = planner.plan(
                     self.model, worker_group, micro_batch_size, num_microbatches
                 )
+
+            if use_ambp:
+                with log_execution_time("ambp", logger.info):
+                    activation_checkpointing_budgets = ambp.plan_budgets(
+                        self.model,
+                        worker_group,
+                        split_points,
+                        device_groups,
+                    )
+            else:
+                activation_checkpointing_budgets = []
 
             object_list = [
                 split_points,
@@ -278,6 +291,7 @@ class HybridPipelineParallel(Parallel):
             if split_point > 0
         }
 
+        logger.debug(f"building pipe: split_spec={split_spec}")
         pipe = pipeline(
             module=self.model,
             mb_args=(microbatch_sample,),
@@ -304,6 +318,7 @@ class HybridPipelineParallel(Parallel):
             else self._device_group_start(device_group_mask)
         )
 
+        logger.debug(f"building stage: stage_index={stage_index}")
         pipeline_stage_train = pipe.build_stage(stage_index, stage_device, pp_group)
         pipeline_stage_eval = pipe.build_stage(stage_index, stage_device, pp_group)
 
@@ -317,6 +332,8 @@ class HybridPipelineParallel(Parallel):
             else 1.0
         )
         torch._inductor.config.compile_threads = 1
+
+        logger.debug(f"compiling: stage_index={stage_index}")
         for pipeline_stage in [pipeline_stage_train, pipeline_stage_eval]:
             stage_module = pipe.get_stage_module(stage_index)
             _modify_graph_op_device(stage_module, self.device)

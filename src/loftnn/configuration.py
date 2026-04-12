@@ -32,8 +32,8 @@ class ProcessConfiguration:
     rank: int
     local_rank: int
     world_size: int
+    timeout: timedelta
     backend: str = "gloo"
-    timeout: timedelta = timedelta(seconds=60)
 
     @staticmethod
     def from_env():
@@ -41,14 +41,20 @@ class ProcessConfiguration:
         local_rank = int(os.environ["LOCAL_RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
 
+        timeout_seconds = os.environ.get("TIMEOUT_SECONDS")
+        timeout = timedelta(
+            seconds=60 if timeout_seconds is None else int(timeout_seconds)
+        )
+
         master_addr = os.environ["MASTER_ADDR"]
         master_port = os.environ["MASTER_PORT"]
+
         logger.info(
-            f"Got RANK={rank}, LOCAL_RANK={local_rank}, WORLD_SIZE={world_size}, MASTER_ADDR={master_addr}, MASTER_PORT={master_port}"
+            f"Got RANK={rank}, LOCAL_RANK={local_rank}, WORLD_SIZE={world_size}, TIMEOUT_SECONDS={timeout_seconds}, MASTER_ADDR={master_addr}, MASTER_PORT={master_port}"
         )
 
         return ProcessConfiguration(
-            rank=rank, local_rank=local_rank, world_size=world_size
+            rank=rank, local_rank=local_rank, world_size=world_size, timeout=timeout
         )
 
 

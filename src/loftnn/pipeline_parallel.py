@@ -1,3 +1,6 @@
+import logging
+import textwrap
+
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -12,6 +15,8 @@ from loftnn.parallel import Parallel
 from loftnn.pipeline_schedule import ScheduleECS1F1B
 from loftnn.types import Device
 
+logger = logging.getLogger(__name__)
+
 
 class PipelineParallel(Parallel):
     def __init__(
@@ -24,6 +29,16 @@ class PipelineParallel(Parallel):
         super(PipelineParallel, self).__init__()
         self.process_config = process_config
         self.pipeline_config = pipeline_config
+
+        logger.info(
+            textwrap.dedent(
+                f"""using:
+                    process_config={process_config},
+                    pipeline_config={pipeline_config},
+                    device={device}
+                """
+            )
+        )
 
         init_process_group(
             backend=process_config.backend,
@@ -38,6 +53,8 @@ class PipelineParallel(Parallel):
             for split_point in pipeline_config.split_points
             if split_point > 0
         }
+
+        logger.debug(f"building pipe: split_spec={split_spec}")
         pipe = pipeline(
             module=model,
             mb_args=(pipeline_config.microbatch_sample,),
@@ -46,6 +63,7 @@ class PipelineParallel(Parallel):
 
         stage_device = Device.cpu  # all nodes must use cpu for building the stage
 
+        logger.debug(f"building stage: stage_index={process_config.rank}")
         pipeline_stage_train = pipe.build_stage(
             process_config.rank, stage_device, torch.distributed.group.WORLD
         )

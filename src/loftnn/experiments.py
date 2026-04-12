@@ -5,15 +5,13 @@ import json
 import pprint
 import time
 
-from loftnn.types import Device
-
 logger = logging.getLogger(__name__)
 
 
 class Experiment(ABC):
 
     @abstractmethod
-    def run(self):
+    def run(self, configurations):
         pass
 
     @abstractmethod
@@ -34,11 +32,11 @@ class Experiment(ABC):
 class ExperimentRunner:
 
     @staticmethod
-    def run_all(device: Device):
+    def run_all(configurations):
         logger.info("Running experiments...")
         experiments = Experiment.__subclasses__()
         experimental_results = {
-            experiment.__name__: list(experiment().run(device))
+            experiment.__name__: list(experiment().run(configurations))
             for experiment in experiments
         }
 
@@ -53,11 +51,11 @@ class ExperimentRunner:
 class ExperimentVisualizer:
 
     @staticmethod
-    def visualize_all():
+    def visualize_all(experimental_results_path="experimental_results.json"):
         logger.info("Visualizing experiments...")
         experiments = Experiment.__subclasses__()
 
         for experiment in experiments:
-            with open("experimental_results.json", "r") as f:
+            with open(experimental_results_path, "r") as f:
                 experimental_results = json.load(f)
             experiment().visualize(experimental_results.get(experiment.__name__, []))

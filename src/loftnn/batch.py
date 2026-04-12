@@ -46,7 +46,7 @@ def max_batch_size(
     else:
         logger.info("estimating max_batch_size")
 
-        inputs = input.random(model, device).numel()
+        inputs = sum([t.numel() for t in input.random(model, device)])
         trainable_parameters = sum(
             p.numel() for p in model.parameters() if p.requires_grad
         )

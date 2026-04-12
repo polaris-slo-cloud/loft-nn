@@ -11,8 +11,7 @@ from loftnn.exact_planner import ExactPlanner
 from loftnn.exact_profiler import ExactProfiler
 from loftnn.model_utils import LayerInputProvider
 from loftnn.sample_allocation import SampleAllocator
-
-from .sample_worker import simple_worker_group
+from loftnn.worker_groups import simple_worker_group
 
 
 class TestPlanModels:
@@ -53,7 +52,7 @@ class TestPlanModels:
 
         print("Planning...")
         plan_start = time.time()
-        split_points, device_groups, samples_allocated, _ = self.planner.plan(
+        split_points, device_groups, samples_allocated = self.planner.plan(
             resnet_model, worker_group, micro_batch_size, num_micro_batches
         )
         plan_end = time.time()

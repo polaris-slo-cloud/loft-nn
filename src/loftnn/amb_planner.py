@@ -5,7 +5,7 @@ import torch.nn as nn
 
 from torchinfo import summary
 
-from loftnn.model_utils import LayerInputProvider
+from loftnn.model_utils import LayerInputProvider, model_to_layers
 from loftnn.types import Device, WorkerGroup
 
 logger = logging.getLogger(__name__)
@@ -25,13 +25,15 @@ class AMBPlanner:
 
     def plan_budgets(
         self,
-        device_group_ranks: list[list[int]],
+        model: nn.Module,
         worker_group: WorkerGroup,
-        layers: list[nn.Module],
         split_points: list[int],
+        device_groups: list[int],
         memory_estimation_factor: float = None,
     ):
         activation_checkpointing_budgets = []
+
+        layers = model_to_layers(model)
 
         optimizer_states_factor = 3
         if memory_estimation_factor is None:
@@ -41,6 +43,12 @@ class AMBPlanner:
         num_stages = (  # used to account for activation memory in 1F1B schedule
             len(split_points) + 1
         )
+
+        max_worker_rank = max([worker.rank for worker in worker_group])
+        device_group_ranks = [
+            list(range(i, j))
+            for i, j in zip([0] + device_groups, device_groups + [max_worker_rank + 1])
+        ]
 
         split_points_complete = [0] + split_points + [len(layers)]
         for idx, split_point in enumerate(split_points_complete):
@@ -53,8 +61,8 @@ class AMBPlanner:
                     x = self.layer_input.random(layer, self.device)
                     layer_statistics = summary(
                         layer,
-                        input_size=x.shape,
-                        dtypes=[x.dtype],
+                        input_size=[t.shape for t in x],
+                        dtypes=[t.dtype for t in x],
                         verbose=0,
                     )
 

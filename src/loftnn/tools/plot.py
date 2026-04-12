@@ -3,6 +3,22 @@ import matplotlib.pyplot as plt
 from loftnn.model_utils import model_to_layers
 
 
+def plot_model(model, name, X, Y=None):
+    from torchview import draw_graph
+
+    draw_graph(
+        model,
+        input_size=X.shape if Y is None else [X.shape, Y.shape],
+        dtypes=[X.dtype] if Y is None else [X.dtype, Y.dtype],
+        depth=1,
+        expand_nested=False,
+        graph_name=f"{name}_architecture",
+        save_graph=True,
+        filename=f"model_{name}",
+    )
+    print(f"saved model_{name}.png")
+
+
 def plot_parameters_by_layer(model):
     layers = model_to_layers(model, include_names=True)
 
@@ -24,12 +40,58 @@ def plot_parameters_by_layer(model):
     plt.close()
 
 
-def plot_training_times_by_epoch(times_by_label, xlabel="Epoch", ylim=100):
+def plot_planning_time_scaling(labels, worker_counts, planning_times):
+    plt.rcParams.update({"font.size": 30})
+    plt.figure(figsize=(10, 6))
+
+    plt.plot(
+        worker_counts,
+        planning_times[0],
+        label=labels[0],
+        marker="o",
+        linestyle="-",
+        linewidth=5,
+        markersize=12,
+    )
+    plt.plot(
+        worker_counts,
+        planning_times[1],
+        label=labels[1],
+        marker="s",
+        linestyle="-",
+        linewidth=5,
+        markersize=12,
+    )
+
+    plt.xlabel("Number of workers")
+    plt.ylabel("Time (s)")
+
+    plt.legend()
+    plt.grid(True, which="both", linestyle="--", alpha=0.6)
+    plt.tight_layout()
+
+    plt.savefig("planning_time_scaling.png")
+    print("saved planning_time_scaling.png")
+
+    plt.close()
+
+
+def plot_training_times_by_epoch(path, times_by_label, xlabel="Epoch", ylim=100):
+    plt.rcParams.update({"font.size": 30})
+    plt.figure(figsize=(10, 6))
+
     for label, times in times_by_label.items():
         epochs = range(1, len(times) + 1)
-        plt.plot(epochs, times, label=label, linestyle="-", marker="o")
+        plt.plot(
+            epochs,
+            times,
+            label=label,
+            linestyle="-",
+            marker="o",
+            linewidth=5,
+            markersize=12,
+        )
 
-    plt.title("Training Times")
     plt.xlabel(xlabel)
     plt.ylabel("Time (s)")
 
@@ -41,18 +103,28 @@ def plot_training_times_by_epoch(times_by_label, xlabel="Epoch", ylim=100):
     plt.grid(True, linestyle="--", alpha=0.6)
     plt.tight_layout()
 
-    plt.savefig("training_times_by_epoch.png")
-    print("saved training_times_by_epoch.png")
+    plt.savefig(f"{path}")
+    print(f"saved {path}")
 
     plt.close()
 
 
-def plot_training_losses_by_epoch(losses_by_label, xlabel="Epoch", ylim=1):
+def plot_training_losses_by_epoch(path, losses_by_label, xlabel="Epoch", ylim=1):
+    plt.rcParams.update({"font.size": 30})
+    plt.figure(figsize=(10, 6))
+
     for label, losses in losses_by_label.items():
         epochs = range(1, len(losses) + 1)
-        plt.plot(epochs, losses, label=label, linestyle="-", marker="o")
+        plt.plot(
+            epochs,
+            losses,
+            label=label,
+            linestyle="-",
+            marker="o",
+            linewidth=5,
+            markersize=12,
+        )
 
-    plt.title("Training Losses")
     plt.xlabel(xlabel)
     plt.ylabel("Loss")
 
@@ -64,16 +136,17 @@ def plot_training_losses_by_epoch(losses_by_label, xlabel="Epoch", ylim=1):
     plt.grid(True, linestyle="--", alpha=0.6)
     plt.tight_layout()
 
-    plt.savefig("training_losses_by_epoch.png")
-    print("saved training_losses_by_epoch.png")
+    plt.savefig(f"{path}")
+    print(f"saved {path}")
 
     plt.close()
 
 
 def plot_profiling_and_planning_times(
-    labels, profiling_times, planning_times, ylim=100
+    path, labels, profiling_times, planning_times, ylim=100
 ):
-    fig, ax = plt.subplots()
+    plt.rcParams.update({"font.size": 30})
+    fig, ax = plt.subplots(figsize=(10, 6))
 
     ax.bar(labels, profiling_times, label="Profiling")
 
@@ -90,39 +163,18 @@ def plot_profiling_and_planning_times(
 
     ax.set_ylim(0, ylim)
     ax.set_ylabel("Time (s)")
-    ax.set_title("Profiling and planning overhead")
     ax.legend()
-
-    plt.savefig("profiling_and_planning_times.png")
-    print("saved profiling_and_planning_times.png")
-
-    plt.close()
-
-
-def plot_planning_time_scaling(labels, worker_counts, planning_times):
-    plt.plot(
-        worker_counts, planning_times[0], label=labels[0], marker="o", linestyle="-"
-    )
-    plt.plot(
-        worker_counts, planning_times[1], label=labels[1], marker="s", linestyle="-"
-    )
-
-    plt.xlabel("Number of workers")
-    plt.ylabel("Time (s)")
-    plt.title("Planning Time Scaling")
-
-    plt.legend()
-    plt.grid(True, which="both", linestyle="--", alpha=0.6)
     plt.tight_layout()
 
-    plt.savefig("planning_time_scaling.png")
-    print("saved planning_time_scaling.png")
+    plt.savefig(f"{path}")
+    print(f"saved {path}")
 
     plt.close()
 
 
-def plot_model_size_limits(labels, model_size_limits, ylim=1000):
-    fig, ax = plt.subplots()
+def plot_model_size_limits(path, labels, model_size_limits, ylim=1000):
+    plt.rcParams.update({"font.size": 30})
+    fig, ax = plt.subplots(figsize=(10, 6))
 
     bar = ax.bar(
         labels,
@@ -135,9 +187,9 @@ def plot_model_size_limits(labels, model_size_limits, ylim=1000):
 
     ax.set_ylim(0, ylim)
     ax.set_ylabel("Parameters (M)")
-    ax.set_title("Model size limits")
+    plt.tight_layout()
 
-    plt.savefig("model_size_limits.png")
-    print("saved model_size_limits.png")
+    plt.savefig(f"{path}")
+    print(f"saved {path}")
 
     plt.close()

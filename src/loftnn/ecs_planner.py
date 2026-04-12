@@ -7,7 +7,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from loftnn.amb_planner import AMBPlanner
 from loftnn.model_utils import LayerInputProvider, model_to_layers
 from loftnn.planner import Planner
 from loftnn.sample_allocation import SampleAllocator
@@ -32,7 +31,6 @@ class ECSPlanner(Planner):
         self.layer_input = layer_input
         self.sample_allocator = sample_allocator
         self.device = device
-        self.amb_planner = AMBPlanner(self.layer_input, self.device)
 
     def _group_close(self, numbers: list[int], threshhold: float):
         groups = []
@@ -65,7 +63,6 @@ class ECSPlanner(Planner):
         num_micro_batches: int,
         compute_capacity_threshhold: float = 0.25,
         bandwidth_threshhold: float = 0.1,
-        memory_estimation_factor: float = None,
     ):
         layers = model_to_layers(model)
 
@@ -128,7 +125,9 @@ class ECSPlanner(Planner):
                 mean_d2d_bandwidth / max_d2d_bandwidth
             ) > (1 - bandwidth_threshhold):
                 for other_worker in similiar_d2d_bandwidth[max_d2d_bandwidth]:
-                    G.add_edge(worker.rank, other_worker.rank, bandwidth=d2d_bandwidth)
+                    G.add_edge(
+                        worker.rank, other_worker.rank, bandwidth=max_d2d_bandwidth
+                    )
 
         cliques = list(nx.find_cliques(G))
         device_group_ranks = self._disjoint(cliques)
@@ -221,7 +220,10 @@ class ECSPlanner(Planner):
 
             x = self.layer_input.random(layer, self.device)
             with torch.no_grad():
-                y = layer(x)
+                y = layer(*x)
+                if not torch.is_tensor(y):
+                    y = y[0]
+
                 intermediate_activations.append(y.numel())
 
         logger.debug(f"parameters: {dict(enumerate(params))}")
@@ -263,7 +265,7 @@ class ECSPlanner(Planner):
                 interval_diff = np.abs(params_per_group_interval - params_intervals)
                 closest_interval = interval_diff.argmin()
                 if closest_interval not in split_points:
-                    split_point = closest_interval
+                    split_point = closest_interval.item()
                     split_points.append(split_point)
                 else:
                     params_intervals[closest_interval] = INVALID
@@ -336,19 +338,8 @@ class ECSPlanner(Planner):
             for worker_group in worker_groups
         ]
 
-        # Step 4: Determine activation checkpointing budgets
-
-        activation_checkpointing_budgets = self.amb_planner.plan_budgets(
-            device_group_ranks,
-            worker_group,
-            layers,
-            split_points,
-            memory_estimation_factor,
-        )
-
         return (
             split_points,
             device_groups,
             samples_allocated,
-            activation_checkpointing_budgets,
         )
