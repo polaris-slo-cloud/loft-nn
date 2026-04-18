@@ -103,7 +103,7 @@ def plot_training_times_by_epoch(path, times_by_label, xlabel="Epoch", ylim=100)
     plt.grid(True, linestyle="--", alpha=0.6)
     plt.tight_layout()
 
-    plt.savefig(f"{path}")
+    plt.savefig(path)
     print(f"saved {path}")
 
     plt.close()
@@ -136,7 +136,7 @@ def plot_training_losses_by_epoch(path, losses_by_label, xlabel="Epoch", ylim=1)
     plt.grid(True, linestyle="--", alpha=0.6)
     plt.tight_layout()
 
-    plt.savefig(f"{path}")
+    plt.savefig(path)
     print(f"saved {path}")
 
     plt.close()
@@ -166,7 +166,7 @@ def plot_profiling_and_planning_times(
     ax.legend()
     plt.tight_layout()
 
-    plt.savefig(f"{path}")
+    plt.savefig(path)
     print(f"saved {path}")
 
     plt.close()
@@ -189,7 +189,7 @@ def plot_model_size_limits(path, labels, model_size_limits, ylim=1000):
     ax.set_ylabel("Parameters (M)")
     plt.tight_layout()
 
-    plt.savefig(f"{path}")
+    plt.savefig(path)
     print(f"saved {path}")
 
     plt.close()
