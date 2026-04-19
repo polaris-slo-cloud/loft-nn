@@ -26,6 +26,15 @@ pip install -e .
 ```
 
 ## Example usage
+
+The following environment variables need to be set for LoftNN to be available for distributed training:
+- `RANK`, e.g. 0, 1, 2 (varies per node)
+- `LOCAL_RANK`, e.g. 0, 1, 2 (varies per node)
+- `WORLD_SIZE`, e.g. 3
+- `MASTER_ADDR`, e.g. 100.90.80.70
+- `MASTER_PORT`, e.g. 5000
+
+Then, LoftNN can be used as part of model training scripts as follows:
 ```
 import loftnn
 
