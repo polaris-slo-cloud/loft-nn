@@ -2,39 +2,78 @@
 
 LoftNN is a framework for distributed training in the edge-cloud-space continuum.
 
-All details on LoftNN can be found in the [paper](TODO).
-
-Publication: TODO ([TODO](TODO))
-
-Abstract:
->
->
->
-
-## Model training scripts
-
-Two model training scripts are provided:
-
-- [nanoGPT-ec](https://github.com/m-maresch/nanoGPT-ec) for GPT models
-- [cnn-ec](https://github.com/m-maresch/cnn-ec) for CNNs (ResNet50) and ViTs (Swin Transformers)
+All details on LoftNN can be found in the paper (more information will be provided here after the publication).
 
 ## Installation and development setup
 
-Clone the repository, then install LoftNN into your virtual environment:
+LoftNN has been implemented using Python 3.10.
+
+A setup script is provided to automate the creation of a virtual environment and the installation of LoftNN and its dependencies:
+```
+chmod +x setup.sh
+./setup.sh
+source venv/bin/activate
+```
+
+For development, you can directly install LoftNN into your virtual environment using:
 ```
 pip install -e .
 ```
 
-## Example usage
+## Model training scripts
 
-The following environment variables need to be set for LoftNN to be available for distributed training:
+LoftNN is a framework used as part of model training scripts. Two model training scripts are provided:
+
+- [cnn-ec](https://github.com/m-maresch/cnn-ec) for CNNs (ResNets) and ViTs (Swin Transformers)
+- [nanoGPT-ec](https://github.com/m-maresch/nanoGPT-ec) for GPT models
+
+## Local training
+
+To get started with training a model locally using LoftNN, we recommend using [cnn-ec](https://github.com/m-maresch/cnn-ec) with the small ResNet18 model.
+
+To do so, clone the cnn-ec repository, then run the following with the venv:
+```
+cd cnn-ec
+
+# Prepare the data
+curl -O https://download.pytorch.org/tutorial/hymenoptera_data.zip
+unzip hymenoptera_data.zip -d data
+
+pip install torchvision
+
+# Start training
+torchrun --nproc_per_node=3 train.py --device=cpu --parallelism="hybrid" --num_epochs=5 --planner="ecs" --no_ambp --model="resnet18"
+```
+
+This trains ResNet18 with 3 processes using LoftNNs hybrid pipeline parallelism. The configuration is determined by ECSP. See the paper for details.
+
+To do the same with a small GPT model, clone the nanoGPT-ec repository, then run the following with the venv:
+```
+cd nanoGPT-ec
+
+# Prepare the data
+curl -LJO https://huggingface.co/datasets/Skylion007/openwebtext/resolve/39d1a6d3f3a4c838b27bbc65bfb14a2f6f727740/subsets/urlsf_subset01.tar?download=true
+mv urlsf_subset01.tar data/openwebtext/
+python data/openwebtext/prepare.py # takes a few minutes
+
+# Start training
+torchrun --nproc_per_node=3 train.py config/train_openwebtext_char_small.py --device=cpu --max_iters=5 --parallelism="hybrid" --planner="ecs" --use_ambp=False
+```
+
+The above has been tested on a MacBook Pro (Intel-based) with 16 GB RAM and using Python 3.10.18.
+
+## Distributed training
+
+The following environment variables need to be set on the nodes involved in the distributed training for LoftNN to be available:
 - `RANK`, e.g. 0, 1, 2 (varies per node)
 - `LOCAL_RANK`, e.g. 0, 1, 2 (varies per node)
 - `WORLD_SIZE`, e.g. 3
 - `MASTER_ADDR`, e.g. 100.90.80.70
 - `MASTER_PORT`, e.g. 5000
 
-Then, LoftNN can be used as part of model training scripts as follows:
+## Usage
+
+LoftNN is used as part of model training scripts as follows:
 ```
 import loftnn
 
@@ -97,6 +136,10 @@ elif use_hybrid_pipeline_parallelism:
         activation_checkpointing_budgets
     )
 ```
+
+## License
+
+This project is licensed under the MIT License. See the `LICENSE` file for details. Third-party library notices are documented in `THIRD-PARTY-NOTICES.txt`.
 
 ## Dependencies
 
