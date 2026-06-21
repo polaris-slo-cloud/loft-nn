@@ -8,16 +8,16 @@ All details on LoftNN can be found in the paper (more information will be provid
 
 LoftNN has been implemented using Python 3.10.
 
-A setup script is provided to automate the creation of a virtual environment and the installation of LoftNN and its dependencies:
+A setup script is provided to automate the creation of a virtual environment and the installation of LoftNN and its dependencies. Use this script when a simple, CPU-only setup is sufficient:
 ```
 chmod +x setup.sh
 ./setup.sh
 source venv/bin/activate
 ```
 
-For development, you can directly install LoftNN into your virtual environment using:
+Alternatively, you can directly install LoftNN into your virtual environment using:
 ```
-pip install -e .
+pip install .
 ```
 
 ## Model training scripts
@@ -39,7 +39,7 @@ cd cnn-ec
 curl -O https://download.pytorch.org/tutorial/hymenoptera_data.zip
 unzip hymenoptera_data.zip -d data
 
-pip install torchvision
+pip install torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cpu
 
 # Start training
 torchrun --nproc_per_node=3 train.py --device=cpu --parallelism="hybrid" --num_epochs=5 --planner="ecs" --no_ambp --model="resnet18"
