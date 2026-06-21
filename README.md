@@ -31,7 +31,11 @@ LoftNN is a framework used as part of model training scripts. Two model training
 
 To get started with training a model locally using LoftNN, we recommend using [cnn-ec](https://github.com/m-maresch/cnn-ec) with the small ResNet18 model.
 
-To do so, clone the cnn-ec repository, then run the following with the venv:
+The following has been tested on a MacBook Pro (Intel-based) with 16 GB RAM and using Python 3.10.18.
+
+### cnn-ec
+
+To train the small ResNet18 model, clone the [cnn-ec](https://github.com/m-maresch/cnn-ec) repository, then run the following with the venv:
 ```
 cd cnn-ec
 
@@ -47,7 +51,11 @@ torchrun --nproc_per_node=3 train.py --device=cpu --parallelism="hybrid" --num_e
 
 This trains ResNet18 with 3 processes using LoftNNs hybrid pipeline parallelism. The configuration is determined by ECSP. See the paper for details.
 
-To do the same with a small GPT model, clone the nanoGPT-ec repository, then run the following with the venv:
+Note: If timeout errors occur during training, try increasing the timeout by running e.g. `export TIMEOUT_SECONDS=120` before the `torchrun` command.
+
+### nanoGPT-ec
+
+To do the same with a small GPT model, clone the [nanoGPT-ec](https://github.com/m-maresch/nanoGPT-ec) repository, then run the following with the venv:
 ```
 cd nanoGPT-ec
 
@@ -59,8 +67,6 @@ python data/openwebtext/prepare.py # takes a few minutes
 # Start training
 torchrun --nproc_per_node=3 train.py config/train_openwebtext_char_small.py --device=cpu --max_iters=5 --parallelism="hybrid" --planner="ecs" --use_ambp=False
 ```
-
-The above has been tested on a MacBook Pro (Intel-based) with 16 GB RAM and using Python 3.10.18.
 
 ## Distributed training
 
