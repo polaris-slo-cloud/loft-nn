@@ -27,6 +27,8 @@ LoftNN is a framework used as part of model training scripts. Two model training
 - [cnn-ec](https://github.com/m-maresch/cnn-ec) for CNNs (ResNets) and ViTs (Swin Transformers)
 - [nanoGPT-ec](https://github.com/m-maresch/nanoGPT-ec) for GPT models
 
+Details on the model training scripts can be found in their repositories.
+
 ## Local training
 
 To get started with training a model locally using LoftNN, we recommend using [cnn-ec](https://github.com/m-maresch/cnn-ec) with the small ResNet18 model.
@@ -49,7 +51,7 @@ pip install torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cpu
 torchrun --nproc_per_node=3 train.py --device=cpu --parallelism="hybrid" --num_epochs=5 --planner="ecs" --no_ambp --model="resnet18"
 ```
 
-This trains ResNet18 with 3 processes using LoftNNs hybrid pipeline parallelism. The configuration is determined by ECSP. See the paper for details.
+This trains ResNet18 with 3 processes using LoftNNs hybrid pipeline parallelism. As per the arguments passed to `train.py`, the configuration is determined by ECSP and AMBP is not used, as the model is small. See the paper for details.
 
 Note: If timeout errors occur during training, try increasing the timeout by running e.g. `export TIMEOUT_SECONDS=120` before the `torchrun` command.
 
