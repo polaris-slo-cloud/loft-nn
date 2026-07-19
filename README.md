@@ -33,7 +33,7 @@ Details on the model training scripts can be found in their repositories.
 
 To get started with training a model locally using LoftNN, we recommend using [cnn-ec](https://github.com/m-maresch/cnn-ec) with the small ResNet18 model.
 
-The following has been tested on a MacBook Pro (Intel-based) with 16 GB RAM and using Python 3.10.18.
+The following has been tested on a MacBook Pro (Intel-based) with 16 GB RAM using Ubuntu (via Docker) and Python 3.10.18.
 
 ### cnn-ec
 
