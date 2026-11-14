@@ -1,8 +1,13 @@
 # LoftNN: Distributed Training of Deep Learning Models in the Edge-Cloud-Space Continuum
 
-LoftNN is a framework for distributed training in the edge-cloud-space continuum.
+This repository contains the source code of the LoftNN framework, which improved the state of the art by reducing planning overhead by more than 97x and enabling 70% larger models to be trained.
 
-All details on LoftNN can be found in the paper (more information will be provided here after the publication).
+All details on LoftNN can be found in the [paper](https://ieeexplore.ieee.org/document/11760327).
+
+Publication: IEEE International Conference on Autonomic Computing and Self-Organizing Systems ([ACSOS 2026](https://2026.acsos.org/))
+
+Abstract:
+> Edge devices provide substantial computational capacity and low-latency access to raw data. The emerging edge-cloud-space continuum extends edge computing with new classes of resources, including low-earth orbit satellite constellations. Existing solutions for distributed training of deep learning models in edge computing environments employ hybrid pipeline parallelism to distribute model training across heterogeneous infrastructures. However, their high profiling and planning overhead limits their applicability to the edge-cloud-space continuum, particularly in high-mobility scenarios with frequently changing training participants. In this work, we investigate how to jointly leverage edge, cloud, and space resources for distributed training of deep learning models while addressing short node-availability windows and heterogeneous memory capacities. We introduce LoftNN, a framework that leverages hybrid pipeline parallelism for distributed training of deep learning models in the edge-cloud-space continuum. We propose a novel planning algorithm that reduces the planning overhead by more than 97x compared to a state-of-the-art approach, producing competitive training configurations with sub-second planning times. To address heterogeneous memory capacities across edge, cloud, and space devices, we propose a novel algorithm to determine activation checkpointing budgets, enabling 70% larger models to be trained on the same underlying infrastructure compared to approaches without activation checkpointing.
 
 ## Installation and development setup
 
